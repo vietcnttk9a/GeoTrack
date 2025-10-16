@@ -1,25 +1,36 @@
 {
   "devices": [
-    {
-      "deviceId": "GPS-0001",
-      "host": "127.0.0.1",
-      "port": 5001
-    },
-    {
-      "deviceId": "GPS-0002",
-      "host": "127.0.0.1",
-      "port": 5002
-    },
-    {
-      "deviceId": "GPS-0003",
-      "host": "127.0.0.1",
-      "port": 5003
-    }
+    { "stationId": "STA-0001", "host": "127.0.0.1", "port": 5001 },
+    { "stationId": "STA-0002", "host": "127.0.0.1", "port": 5002 },
+    { "stationId": "STA-0003", "host": "127.0.0.1", "port": 5003 }
   ],
   "externalApp": {
     "baseUrl": "http://localhost:5000",
     "clientId": "0e9a1a3a-d422-454f-c883-be117f3d0b0e.152",
     "clientSecret": "OaljMFcPiRSTmqqObQDPRbTvjfI2On2U",
-    "sendIntervalSeconds": 5
+    "sendIntervalSeconds": 5,
+    "endpoints": {
+      "loginPath": "/api/auth-plugin/auth/login-by-key",
+      "refreshPath": "/api/auth-plugin/auth/refresh-token",
+      "aggregatePath": "/api/golf/check-location/telemetry"
+    },
+    "http": {
+      "timeoutSeconds": 10,
+      "retryCount": 3,
+      "retryDelaySeconds": 2
+    }
+  },
+  "reconnect": {
+    "initialDelaySeconds": 10,
+    "maxDelaySeconds": 60,
+    "useExponentialBackoff": true
+  },
+  "appBehavior": {
+    "runInBackgroundWhenHidden": true,
+    "startMinimized": false,
+    "tray": {
+      "showTrayIcon": true,
+      "balloonOnBackground": true
+    }
   }
 }

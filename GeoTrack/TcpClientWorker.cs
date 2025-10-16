@@ -1,9 +1,9 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
+using GeoTrack.Models;
 
 namespace GeoTrack;
 
@@ -14,17 +14,16 @@ public sealed class TcpClientWorker
         PropertyNameCaseInsensitive = true
     };
 
-    private CancellationTokenSource? _cts;
+    private readonly ReconnectSettings _reconnectSettings;
     private Task? _runningTask;
-    private readonly TimeSpan _reconnectDelay;
 
-    public TcpClientWorker(DeviceEntry device, TimeSpan reconnectDelay)
+    public TcpClientWorker(DeviceEntryDto device, ReconnectSettings reconnectSettings)
     {
         Device = device;
-        _reconnectDelay = reconnectDelay <= TimeSpan.Zero ? TimeSpan.FromSeconds(10) : reconnectDelay;
+        _reconnectSettings = reconnectSettings;
     }
 
-    public DeviceEntry Device { get; }
+    public DeviceEntryDto Device { get; }
 
     public event EventHandler<GeoMessageReceivedEventArgs>? MessageReceived;
     public event EventHandler<DeviceStatusChangedEventArgs>? StatusChanged;
@@ -32,32 +31,20 @@ public sealed class TcpClientWorker
 
     public Task? Completion => _runningTask;
 
-    public void Start()
+    public void Start(CancellationToken cancellationToken)
     {
         if (_runningTask != null && !_runningTask.IsCompleted)
         {
             throw new InvalidOperationException("Worker is already running.");
         }
 
-        _cts = new CancellationTokenSource();
-        _runningTask = Task.Run(() => RunAsync(_cts.Token));
-    }
-
-    public void Stop()
-    {
-        if (_cts == null)
-        {
-            return;
-        }
-
-        if (!_cts.IsCancellationRequested)
-        {
-            _cts.Cancel();
-        }
+        _runningTask = Task.Run(() => RunAsync(cancellationToken), cancellationToken);
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)
     {
+        var delay = _reconnectSettings.EnsureValidDelay(null);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -66,16 +53,18 @@ public sealed class TcpClientWorker
                 Log($"Connecting to {Device.Host}:{Device.Port}");
 
                 using var client = new TcpClient();
-                await client.ConnectAsync(Device.Host, Device.Port, cancellationToken);
+                await client.ConnectAsync(Device.Host, Device.Port, cancellationToken).ConfigureAwait(false);
                 UpdateStatus("Connected");
                 Log("Connection established.");
 
                 await using var networkStream = client.GetStream();
                 using var reader = new StreamReader(networkStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
 
+                delay = _reconnectSettings.EnsureValidDelay(null);
+
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    var line = await reader.ReadLineAsync(cancellationToken);
+                    var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
                     if (line == null)
                     {
                         UpdateStatus("Disconnected");
@@ -90,7 +79,7 @@ public sealed class TcpClientWorker
 
                     try
                     {
-                        var messages = JsonSerializer.Deserialize<List<GeoMessage>>(line, SerializerOptions);
+                        var messages = JsonSerializer.Deserialize<List<GeoMessageDto>>(line, SerializerOptions);
                         if (messages == null)
                         {
                             continue;
@@ -100,7 +89,7 @@ public sealed class TcpClientWorker
                         {
                             if (string.IsNullOrWhiteSpace(message.DeviceId))
                             {
-                                message.DeviceId = Device.DeviceId;
+                                message.DeviceId = Device.StationId;
                             }
 
                             OnMessageReceived(message);
@@ -125,22 +114,26 @@ public sealed class TcpClientWorker
                 Log($"Connection error: {ex.Message}");
             }
 
-            if (!cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
             {
-                UpdateStatus("Reconnecting...");
-                Log($"Reconnecting in {(int)_reconnectDelay.TotalSeconds} seconds...");
-
-                try
-                {
-                    await Task.Delay(_reconnectDelay, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    UpdateStatus("Stopped");
-                    Log("Reconnect cancelled.");
-                    break;
-                }
+                break;
             }
+
+            UpdateStatus("Reconnecting...");
+            Log($"Reconnecting in {(int)delay.TotalSeconds} seconds...");
+
+            try
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                UpdateStatus("Stopped");
+                Log("Reconnect cancelled.");
+                break;
+            }
+
+            delay = _reconnectSettings.NextDelay(delay);
         }
     }
 
@@ -149,39 +142,39 @@ public sealed class TcpClientWorker
         StatusChanged?.Invoke(this, new DeviceStatusChangedEventArgs(Device, status, DateTime.UtcNow));
     }
 
-    private void OnMessageReceived(GeoMessage message)
+    private void OnMessageReceived(GeoMessageDto message)
     {
         MessageReceived?.Invoke(this, new GeoMessageReceivedEventArgs(message, Device));
     }
 
     private void Log(string message)
     {
-        LogGenerated?.Invoke(this, new LogMessageEventArgs(Device.DeviceId, message, DateTime.UtcNow));
+        LogGenerated?.Invoke(this, new LogMessageEventArgs(Device.StationId, message, DateTime.UtcNow));
     }
 }
 
 public sealed class GeoMessageReceivedEventArgs : EventArgs
 {
-    public GeoMessageReceivedEventArgs(GeoMessage message, DeviceEntry device)
+    public GeoMessageReceivedEventArgs(GeoMessageDto message, DeviceEntryDto device)
     {
         Message = message;
         Device = device;
     }
 
-    public GeoMessage Message { get; }
-    public DeviceEntry Device { get; }
+    public GeoMessageDto Message { get; }
+    public DeviceEntryDto Device { get; }
 }
 
 public sealed class DeviceStatusChangedEventArgs : EventArgs
 {
-    public DeviceStatusChangedEventArgs(DeviceEntry device, string status, DateTime timestamp)
+    public DeviceStatusChangedEventArgs(DeviceEntryDto device, string status, DateTime timestamp)
     {
         Device = device;
         Status = status;
         Timestamp = timestamp;
     }
 
-    public DeviceEntry Device { get; }
+    public DeviceEntryDto Device { get; }
     public string Status { get; }
     public DateTime Timestamp { get; }
 }

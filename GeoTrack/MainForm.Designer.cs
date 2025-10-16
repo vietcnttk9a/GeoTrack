@@ -31,6 +31,7 @@ namespace GeoTrack
         /// </summary>
         private void InitializeComponent()
         {
+            components = new System.ComponentModel.Container();
             topPanel = new Panel();
             reloadConfigButton = new Button();
             deviceFilterComboBox = new ComboBox();
@@ -45,9 +46,15 @@ namespace GeoTrack
             logPanel = new Panel();
             logTextBox = new TextBox();
             logLabel = new Label();
+            trayContextMenu = new ContextMenuStrip(components);
+            openMenuItem = new ToolStripMenuItem();
+            toggleSendingMenuItem = new ToolStripMenuItem();
+            exitMenuItem = new ToolStripMenuItem();
+            trayNotifyIcon = new NotifyIcon(components);
             topPanel.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)messagesGrid).BeginInit();
             logPanel.SuspendLayout();
+            trayContextMenu.SuspendLayout();
             SuspendLayout();
             //
             // topPanel
@@ -93,7 +100,7 @@ namespace GeoTrack
             filterLabel.Name = "filterLabel";
             filterLabel.Size = new Size(79, 20);
             filterLabel.TabIndex = 1;
-            filterLabel.Text = "Device filter";
+            filterLabel.Text = "Station filter";
             //
             // connectionStatusLabel
             //
@@ -130,7 +137,7 @@ namespace GeoTrack
             //
             // deviceColumnHeader
             //
-            deviceColumnHeader.Text = "Device";
+            deviceColumnHeader.Text = "Station";
             deviceColumnHeader.Width = 200;
             //
             // statusColumnHeader
@@ -192,6 +199,42 @@ namespace GeoTrack
             logLabel.Text = "Logs";
             logLabel.TextAlign = ContentAlignment.MiddleLeft;
             //
+            // trayContextMenu
+            //
+            trayContextMenu.ImageScalingSize = new Size(20, 20);
+            trayContextMenu.Items.AddRange(new ToolStripItem[] { openMenuItem, toggleSendingMenuItem, exitMenuItem });
+            trayContextMenu.Name = "trayContextMenu";
+            trayContextMenu.Size = new Size(197, 76);
+            //
+            // openMenuItem
+            //
+            openMenuItem.Name = "openMenuItem";
+            openMenuItem.Size = new Size(196, 24);
+            openMenuItem.Text = "Open";
+            openMenuItem.Click += OpenMenuItem_Click;
+            //
+            // toggleSendingMenuItem
+            //
+            toggleSendingMenuItem.Name = "toggleSendingMenuItem";
+            toggleSendingMenuItem.Size = new Size(196, 24);
+            toggleSendingMenuItem.Text = "Pause Sending";
+            toggleSendingMenuItem.Click += ToggleSendingMenuItem_Click;
+            //
+            // exitMenuItem
+            //
+            exitMenuItem.Name = "exitMenuItem";
+            exitMenuItem.Size = new Size(196, 24);
+            exitMenuItem.Text = "Exit";
+            exitMenuItem.Click += ExitMenuItem_Click;
+            //
+            // trayNotifyIcon
+            //
+            trayNotifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+            trayNotifyIcon.ContextMenuStrip = trayContextMenu;
+            trayNotifyIcon.Text = "GeoTrack";
+            trayNotifyIcon.Visible = false;
+            trayNotifyIcon.DoubleClick += TrayNotifyIcon_DoubleClick;
+            //
             // MainForm
             //
             AutoScaleDimensions = new SizeF(8F, 20F);
@@ -206,11 +249,14 @@ namespace GeoTrack
             StartPosition = FormStartPosition.CenterScreen;
             Text = "GeoTrack";
             Load += MainForm_Load;
+            FormClosing += MainForm_FormClosing;
+            Resize += MainForm_Resize;
             topPanel.ResumeLayout(false);
             topPanel.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)messagesGrid).EndInit();
             logPanel.ResumeLayout(false);
             logPanel.PerformLayout();
+            trayContextMenu.ResumeLayout(false);
             ResumeLayout(false);
         }
 
@@ -230,5 +276,10 @@ namespace GeoTrack
         private Panel logPanel;
         private TextBox logTextBox;
         private Label logLabel;
+        private ContextMenuStrip trayContextMenu;
+        private ToolStripMenuItem openMenuItem;
+        private ToolStripMenuItem toggleSendingMenuItem;
+        private ToolStripMenuItem exitMenuItem;
+        private NotifyIcon trayNotifyIcon;
     }
 }

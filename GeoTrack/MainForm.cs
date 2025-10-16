@@ -1,11 +1,14 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using GeoTrack.Models;
 
 namespace GeoTrack;
 
@@ -17,17 +20,29 @@ public partial class MainForm : Form
     private readonly List<GeoMessageView> _allMessages = new();
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
-    private readonly Dictionary<string, GeoMessage> _latestMessages = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HttpClient _httpClient = new();
+    private readonly BuggyRepository _buggyRepository = new();
+
+    private DeviceConfigDto? _currentConfig;
+    private AppBehaviorConfigDto _appBehavior = new();
+    private CancellationTokenSource? _appCts;
+    private HttpClient? _httpClient;
     private ExternalAppTokenManager? _tokenManager;
     private ExternalAppSender? _externalSender;
-    private string? _selectedDeviceFilter;
+    private string? _selectedStationFilter;
+    private bool _allowClose;
 
     public MainForm()
     {
         InitializeComponent();
         InitializeGrids();
+        InitializeTrayMenuState();
         FormClosed += MainForm_FormClosed;
+    }
+
+    private void InitializeTrayMenuState()
+    {
+        toggleSendingMenuItem.Enabled = false;
+        trayNotifyIcon.Visible = false;
     }
 
     private void InitializeGrids()
@@ -40,6 +55,13 @@ public partial class MainForm : Form
             HeaderText = "Time",
             DataPropertyName = nameof(GeoMessageView.Time),
             Width = 160
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Station",
+            DataPropertyName = nameof(GeoMessageView.StationId),
+            Width = 120
         });
 
         messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
@@ -97,7 +119,7 @@ public partial class MainForm : Form
         });
     }
 
-    private async void MainForm_Load(object sender, EventArgs e)
+    private async void MainForm_Load(object? sender, EventArgs e)
     {
         await ReloadConfigurationAsync();
     }
@@ -106,24 +128,36 @@ public partial class MainForm : Form
     {
         reloadConfigButton.Enabled = false;
 
-        await StopExternalIntegrationAsync();
-        await StopWorkersAsync();
+        await StopAllBackgroundOperationsAsync();
         ClearUiState();
 
         try
         {
             var configPath = Path.Combine(AppContext.BaseDirectory, "devices.config.json");
-            var config = await ConfigLoader.LoadAsync(configPath);
+            var config = await ConfigLoader.LoadAsync(configPath).ConfigureAwait(true);
+            _currentConfig = config;
+            _appBehavior = config.AppBehavior ?? new AppBehaviorConfigDto();
+
+            EnsureTrayIcon();
 
             PopulateDeviceFilter(config);
 
-            foreach (var device in config.Devices)
+            if (config.Devices.Count > 0)
             {
-                var reconnectInterval = GetReconnectInterval(config, device);
-                RegisterDevice(device, reconnectInterval);
+                _appCts = new CancellationTokenSource();
+
+                foreach (var device in config.Devices)
+                {
+                    RegisterDevice(device);
+                }
             }
 
-            await InitializeExternalAppAsync(config);
+            await InitializeExternalAppAsync(config).ConfigureAwait(true);
+
+            if (_appBehavior.RunInBackgroundWhenHidden && _appBehavior.StartMinimized)
+            {
+                BeginInvoke(new Action(() => HideToTray("GeoTrack đang chạy nền.")));
+            }
         }
         catch (Exception ex)
         {
@@ -135,71 +169,225 @@ public partial class MainForm : Form
         }
     }
 
-    private void RegisterDevice(DeviceEntry device, TimeSpan reconnectInterval)
+    private async Task StopAllBackgroundOperationsAsync()
     {
-        _deviceStatuses[device.DeviceId] = new DeviceStatusInfo("Pending", DateTime.UtcNow);
-        UpdateDeviceStatus(device.DeviceId);
-        UpdateConnectionSummary();
+        _buggyRepository.Clear();
 
-        var worker = new TcpClientWorker(device, reconnectInterval);
-        worker.MessageReceived += Worker_MessageReceived;
-        worker.StatusChanged += Worker_StatusChanged;
-        worker.LogGenerated += OnLogMessage;
-        _workers.Add(worker);
+        if (_appCts != null && !_appCts.IsCancellationRequested)
+        {
+            _appCts.Cancel();
+        }
 
-        worker.Start();
-    }
+        var tasks = new List<Task>();
+        tasks.AddRange(_workers.Select(worker => worker.Completion ?? Task.CompletedTask));
+        if (_externalSender?.Completion != null)
+        {
+            tasks.Add(_externalSender.Completion);
+        }
 
-    private async Task StopWorkersAsync()
-    {
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(true);
+        }
+        catch
+        {
+            // Ignored
+        }
+
         foreach (var worker in _workers)
         {
             worker.MessageReceived -= Worker_MessageReceived;
             worker.StatusChanged -= Worker_StatusChanged;
             worker.LogGenerated -= OnLogMessage;
-            worker.Stop();
         }
-
-        var completions = _workers.Select(worker => worker.Completion ?? Task.CompletedTask).ToArray();
         _workers.Clear();
 
-        try
+        if (_externalSender != null)
         {
-            await Task.WhenAll(completions);
+            _externalSender.LogGenerated -= OnLogMessage;
+            _externalSender.StatusChanged -= ExternalStatusChanged;
+            _externalSender = null;
         }
-        catch
+
+        if (_tokenManager != null)
         {
-            // Ignored - stopping workers may throw due to cancellation.
+            _tokenManager.LogGenerated -= OnLogMessage;
+            _tokenManager.StatusChanged -= ExternalStatusChanged;
+            _tokenManager.Dispose();
+            _tokenManager = null;
         }
+
+        _httpClient?.Dispose();
+        _httpClient = null;
+
+        if (_appCts != null)
+        {
+            _appCts.Dispose();
+            _appCts = null;
+        }
+
+        toggleSendingMenuItem.Enabled = false;
+        UpdateTrayMenu();
     }
 
-    private void ClearUiState()
+    private void RegisterDevice(DeviceEntryDto device)
     {
-        _allMessages.Clear();
-        _visibleMessages.Clear();
-        _deviceStatuses.Clear();
-        statusListView.Items.Clear();
-        connectionStatusLabel.Text = "Connected: 0 / 0 devices";
-        UpdateExternalStatus("Disabled");
-        lock (_latestMessages)
+        if (_appCts == null)
         {
-            _latestMessages.Clear();
+            return;
         }
+
+        _deviceStatuses[device.StationId] = new DeviceStatusInfo("Pending", DateTime.UtcNow);
+        UpdateDeviceStatus(device.StationId);
+        UpdateConnectionSummary();
+
+        var worker = new TcpClientWorker(device, CreateReconnectSettings(device));
+        worker.MessageReceived += Worker_MessageReceived;
+        worker.StatusChanged += Worker_StatusChanged;
+        worker.LogGenerated += OnLogMessage;
+        _workers.Add(worker);
+        worker.Start(_appCts.Token);
     }
 
-    private void PopulateDeviceFilter(DeviceConfig config)
+    private ReconnectSettings CreateReconnectSettings(DeviceEntryDto device)
+    {
+        var deviceReconnect = device.Reconnect;
+        var globalReconnect = _currentConfig?.Reconnect;
+
+        int initialSeconds = deviceReconnect?.InitialDelaySeconds
+            ?? globalReconnect?.InitialDelaySeconds
+            ?? 10;
+        if (initialSeconds <= 0)
+        {
+            initialSeconds = 10;
+        }
+
+        int maxSeconds = deviceReconnect?.MaxDelaySeconds
+            ?? globalReconnect?.MaxDelaySeconds
+            ?? 60;
+        if (maxSeconds < initialSeconds)
+        {
+            maxSeconds = initialSeconds;
+        }
+
+        var useExponential = deviceReconnect?.UseExponentialBackoff
+            ?? globalReconnect?.UseExponentialBackoff
+            ?? true;
+
+        return new ReconnectSettings(
+            TimeSpan.FromSeconds(initialSeconds),
+            TimeSpan.FromSeconds(maxSeconds),
+            useExponential);
+    }
+
+    private void PopulateDeviceFilter(DeviceConfigDto config)
     {
         deviceFilterComboBox.Items.Clear();
-        deviceFilterComboBox.Items.Add("All devices");
+        deviceFilterComboBox.Items.Add("All stations");
 
         foreach (var device in config.Devices)
         {
-            deviceFilterComboBox.Items.Add(device.DeviceId);
+            deviceFilterComboBox.Items.Add(device.StationId);
         }
 
         if (deviceFilterComboBox.Items.Count > 0)
         {
             deviceFilterComboBox.SelectedIndex = 0;
+        }
+    }
+
+    private async Task InitializeExternalAppAsync(DeviceConfigDto config)
+    {
+        if (config.ExternalApp == null)
+        {
+            UpdateExternalStatus("Disabled");
+            return;
+        }
+
+        var externalConfig = config.ExternalApp;
+        externalConfig.Endpoints ??= new ExternalAppEndpointsConfigDto();
+        externalConfig.Http ??= new ExternalAppHttpConfigDto();
+
+        _httpClient = HttpClientFactory.Create(externalConfig.Http);
+
+        if (Uri.TryCreate(externalConfig.BaseUrl, UriKind.Absolute, out var baseUri))
+        {
+            _httpClient.BaseAddress = baseUri;
+        }
+
+        if (_appCts == null)
+        {
+            _appCts = new CancellationTokenSource();
+        }
+
+        _tokenManager = new ExternalAppTokenManager(_httpClient, externalConfig);
+        _tokenManager.LogGenerated += OnLogMessage;
+        _tokenManager.StatusChanged += ExternalStatusChanged;
+
+        _externalSender = new ExternalAppSender(_httpClient, externalConfig, _tokenManager, CreateTelemetryPayload);
+        _externalSender.LogGenerated += OnLogMessage;
+        _externalSender.StatusChanged += ExternalStatusChanged;
+
+        toggleSendingMenuItem.Enabled = true;
+        UpdateTrayMenu();
+
+        UpdateExternalStatus("Initializing...");
+
+        try
+        {
+            await _tokenManager.EnsureAuthenticatedAsync(_appCts.Token).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            LogInfo("ExternalApp", $"Initial login failed: {ex.Message}");
+            UpdateExternalStatus("Authentication failed");
+        }
+
+        if (_appCts is { Token: var token })
+        {
+            try
+            {
+                _externalSender.Start(token);
+            }
+            catch (Exception ex)
+            {
+                LogInfo("ExternalApp", $"Không thể khởi động sender: {ex.Message}");
+                UpdateExternalStatus("Sender error");
+            }
+        }
+    }
+
+    private AggregatePayloadDto CreateTelemetryPayload()
+    {
+        var snapshot = _buggyRepository.Snapshot();
+        return new AggregatePayloadDto
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Metrics = new AggregateMetricsDto
+            {
+                TotalDevices = snapshot.Count,
+                ActiveDevices = snapshot.Count
+            },
+            Buggies = snapshot.ToList()
+        };
+    }
+
+    private void Worker_MessageReceived(object? sender, GeoMessageReceivedEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<object?, GeoMessageReceivedEventArgs>(Worker_MessageReceived), sender, e);
+            return;
+        }
+
+        _buggyRepository.Update(e.Device.StationId, e.Message);
+
+        var view = GeoMessageView.FromMessage(e.Message, e.Device.StationId);
+        _allMessages.Add(view);
+
+        if (ShouldDisplay(view.StationId))
+        {
+            _visibleMessages.Add(view);
         }
     }
 
@@ -211,58 +399,24 @@ public partial class MainForm : Form
             return;
         }
 
-        _deviceStatuses[e.Device.DeviceId] = new DeviceStatusInfo(e.Status, e.Timestamp);
-        UpdateDeviceStatus(e.Device.DeviceId);
+        _deviceStatuses[e.Device.StationId] = new DeviceStatusInfo(e.Status, e.Timestamp);
+        UpdateDeviceStatus(e.Device.StationId);
         UpdateConnectionSummary();
     }
 
-    private void Worker_MessageReceived(object? sender, GeoMessageReceivedEventArgs e)
+    private void UpdateDeviceStatus(string stationId)
     {
-        if (InvokeRequired)
-        {
-            BeginInvoke(new Action<object?, GeoMessageReceivedEventArgs>(Worker_MessageReceived), sender, e);
-            return;
-        }
-
-        var view = GeoMessageView.FromMessage(e.Message);
-        _allMessages.Add(view);
-
-        lock (_latestMessages)
-        {
-            _latestMessages[e.Message.DeviceId] = e.Message;
-        }
-
-        if (ShouldDisplay(view.DeviceId))
-        {
-            _visibleMessages.Add(view);
-        }
-    }
-
-    private bool ShouldDisplay(string deviceId)
-    {
-        return string.IsNullOrEmpty(_selectedDeviceFilter) || string.Equals(deviceId, _selectedDeviceFilter, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void UpdateConnectionSummary()
-    {
-        var connected = _deviceStatuses.Values.Count(status => string.Equals(status.Status, "Connected", StringComparison.OrdinalIgnoreCase));
-        var total = _deviceStatuses.Count;
-        connectionStatusLabel.Text = $"Connected: {connected} / {total} devices";
-    }
-
-    private void UpdateDeviceStatus(string deviceId)
-    {
-        if (!_deviceStatuses.TryGetValue(deviceId, out var status))
+        if (!_deviceStatuses.TryGetValue(stationId, out var status))
         {
             return;
         }
 
-        var existingItem = statusListView.Items.Cast<ListViewItem>().FirstOrDefault(item => string.Equals(item.Name, deviceId, StringComparison.OrdinalIgnoreCase));
+        var existingItem = statusListView.Items.Cast<ListViewItem>().FirstOrDefault(item => string.Equals(item.Name, stationId, StringComparison.OrdinalIgnoreCase));
         if (existingItem == null)
         {
-            existingItem = new ListViewItem(deviceId)
+            existingItem = new ListViewItem(stationId)
             {
-                Name = deviceId
+                Name = stationId
             };
             existingItem.SubItems.Add(status.Status);
             existingItem.SubItems.Add(status.Timestamp.ToLocalTime().ToString("HH:mm:ss"));
@@ -275,20 +429,22 @@ public partial class MainForm : Form
         }
     }
 
-    private async void ReloadConfigButton_Click(object? sender, EventArgs e)
+    private void UpdateConnectionSummary()
     {
-        await ReloadConfigurationAsync();
+        var connected = _deviceStatuses.Values.Count(status => string.Equals(status.Status, "Connected", StringComparison.OrdinalIgnoreCase));
+        var total = _deviceStatuses.Count;
+        connectionStatusLabel.Text = $"Connected: {connected} / {total} devices";
     }
 
     private void DeviceFilterComboBox_SelectedIndexChanged(object? sender, EventArgs e)
     {
         if (deviceFilterComboBox.SelectedIndex <= 0)
         {
-            _selectedDeviceFilter = null;
+            _selectedStationFilter = null;
         }
         else
         {
-            _selectedDeviceFilter = deviceFilterComboBox.SelectedItem?.ToString();
+            _selectedStationFilter = deviceFilterComboBox.SelectedItem?.ToString();
         }
 
         ApplyFilter();
@@ -301,7 +457,7 @@ public partial class MainForm : Form
 
         foreach (var message in _allMessages)
         {
-            if (ShouldDisplay(message.DeviceId))
+            if (ShouldDisplay(message.StationId))
             {
                 _visibleMessages.Add(message);
             }
@@ -311,114 +467,9 @@ public partial class MainForm : Form
         _visibleMessages.ResetBindings();
     }
 
-    private async Task StopExternalIntegrationAsync()
+    private bool ShouldDisplay(string stationId)
     {
-        if (_externalSender != null)
-        {
-            _externalSender.LogGenerated -= OnLogMessage;
-            _externalSender.StatusChanged -= ExternalStatusChanged;
-            await _externalSender.StopAsync();
-            _externalSender = null;
-        }
-
-        if (_tokenManager != null)
-        {
-            _tokenManager.LogGenerated -= OnLogMessage;
-            _tokenManager.StatusChanged -= ExternalStatusChanged;
-            _tokenManager.Dispose();
-            _tokenManager = null;
-        }
-
-        UpdateExternalStatus("Disabled");
-    }
-
-    private async Task InitializeExternalAppAsync(DeviceConfig config)
-    {
-        if (config.ExternalApp == null)
-        {
-            UpdateExternalStatus("Disabled");
-            return;
-        }
-
-        if (!Uri.TryCreate(config.ExternalApp.BaseUrl, UriKind.Absolute, out var baseUri))
-        {
-            throw new InvalidOperationException($"BaseUrl không hợp lệ: {config.ExternalApp.BaseUrl}");
-        }
-
-        if (_httpClient.BaseAddress == null || _httpClient.BaseAddress != baseUri)
-        {
-            _httpClient.BaseAddress = baseUri;
-        }
-
-        _tokenManager = new ExternalAppTokenManager(_httpClient, config.ExternalApp);
-        _tokenManager.LogGenerated += OnLogMessage;
-        _tokenManager.StatusChanged += ExternalStatusChanged;
-
-        _externalSender = new ExternalAppSender(_httpClient, config.ExternalApp, _tokenManager, CreateTelemetryPayload);
-        _externalSender.LogGenerated += OnLogMessage;
-        _externalSender.StatusChanged += ExternalStatusChanged;
-
-        UpdateExternalStatus("Initializing...");
-
-        try
-        {
-            await _tokenManager.EnsureAuthenticatedAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            LogInfo("ExternalApp", $"Initial login failed: {ex.Message}");
-            UpdateExternalStatus("Authentication failed");
-        }
-
-        try
-        {
-            _externalSender.Start();
-            LogInfo("ExternalApp", "Telemetry sender started.");
-        }
-        catch (Exception ex)
-        {
-            LogInfo("ExternalApp", $"Không thể khởi động sender: {ex.Message}");
-            UpdateExternalStatus("Sender error");
-        }
-    }
-
-    private object CreateTelemetryPayload()
-    {
-        GeoMessage[] snapshot;
-
-        lock (_latestMessages)
-        {
-            snapshot = _latestMessages.Values.Select(message => message).ToArray();
-        }
-
-        var devices = snapshot.Select(message => new
-        {
-            message.DeviceId,
-            message.Latitude,
-            message.Longitude,
-            message.SpeedKph,
-            message.HeadingDeg,
-            message.BatteryPct,
-            message.Status,
-            Timestamp = message.Timestamp
-        }).ToList();
-
-        return new
-        {
-            Timestamp = DateTimeOffset.UtcNow,
-            Devices = devices
-        };
-    }
-
-    private static TimeSpan GetReconnectInterval(DeviceConfig config, DeviceEntry device)
-    {
-        var seconds = device.ReconnectIntervalSeconds ?? config.ReconnectIntervalSeconds ?? 10;
-        if (seconds <= 0)
-        {
-            seconds = 10;
-        }
-
-        return TimeSpan.FromSeconds(seconds);
+        return string.IsNullOrEmpty(_selectedStationFilter) || string.Equals(stationId, _selectedStationFilter, StringComparison.OrdinalIgnoreCase);
     }
 
     private void ExternalStatusChanged(object? sender, ExternalAppStatusChangedEventArgs e)
@@ -430,6 +481,7 @@ public partial class MainForm : Form
         }
 
         UpdateExternalStatus($"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})");
+        UpdateTrayMenu();
     }
 
     private void UpdateExternalStatus(string status)
@@ -475,17 +527,146 @@ public partial class MainForm : Form
         OnLogMessage(this, new LogMessageEventArgs(source, message, DateTime.UtcNow));
     }
 
+    private void ReloadConfigButton_Click(object? sender, EventArgs e)
+    {
+        _ = ReloadConfigurationAsync();
+    }
+
+    private void ClearUiState()
+    {
+        _allMessages.Clear();
+        _visibleMessages.Clear();
+        _deviceStatuses.Clear();
+        statusListView.Items.Clear();
+        connectionStatusLabel.Text = "Connected: 0 / 0 devices";
+        UpdateExternalStatus("Disabled");
+        _buggyRepository.Clear();
+    }
+
+    private void MainForm_Resize(object? sender, EventArgs e)
+    {
+        if (WindowState == FormWindowState.Minimized && _appBehavior.RunInBackgroundWhenHidden)
+        {
+            HideToTray("GeoTrack đang chạy nền.");
+        }
+    }
+
+    private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_allowClose)
+        {
+            return;
+        }
+
+        if (e.CloseReason == CloseReason.UserClosing && _appBehavior.RunInBackgroundWhenHidden)
+        {
+            e.Cancel = true;
+            HideToTray("GeoTrack tiếp tục chạy nền.");
+        }
+    }
+
     private async void MainForm_FormClosed(object? sender, FormClosedEventArgs e)
     {
-        await StopExternalIntegrationAsync();
-        await StopWorkersAsync();
-        _httpClient.Dispose();
+        trayNotifyIcon.Visible = false;
+        trayNotifyIcon.Dispose();
+        await StopAllBackgroundOperationsAsync();
+    }
+
+    private void OpenMenuItem_Click(object? sender, EventArgs e)
+    {
+        ShowFromTray();
+    }
+
+    private void ToggleSendingMenuItem_Click(object? sender, EventArgs e)
+    {
+        if (_externalSender == null)
+        {
+            return;
+        }
+
+        if (_externalSender.IsPaused)
+        {
+            _externalSender.Resume();
+        }
+        else
+        {
+            _externalSender.Pause();
+        }
+
+        UpdateTrayMenu();
+    }
+
+    private void ExitMenuItem_Click(object? sender, EventArgs e)
+    {
+        _allowClose = true;
+        trayNotifyIcon.Visible = false;
+        Close();
+    }
+
+    private void TrayNotifyIcon_DoubleClick(object? sender, EventArgs e)
+    {
+        ShowFromTray();
+    }
+
+    private void UpdateTrayMenu()
+    {
+        if (_externalSender == null)
+        {
+            toggleSendingMenuItem.Text = "Pause Sending";
+            toggleSendingMenuItem.Enabled = false;
+        }
+        else
+        {
+            toggleSendingMenuItem.Enabled = true;
+            toggleSendingMenuItem.Text = _externalSender.IsPaused ? "Resume Sending" : "Pause Sending";
+        }
+    }
+
+    private void EnsureTrayIcon()
+    {
+        trayNotifyIcon.Icon ??= Icon ?? SystemIcons.Application;
+        trayNotifyIcon.Visible = _appBehavior.RunInBackgroundWhenHidden && _appBehavior.Tray.ShowTrayIcon && !Visible;
+    }
+
+    private void HideToTray(string? message)
+    {
+        if (!_appBehavior.RunInBackgroundWhenHidden)
+        {
+            return;
+        }
+
+        EnsureTrayIcon();
+        if (_appBehavior.Tray.ShowTrayIcon)
+        {
+            trayNotifyIcon.Visible = true;
+            if (_appBehavior.Tray.BalloonOnBackground && !string.IsNullOrWhiteSpace(message))
+            {
+                trayNotifyIcon.BalloonTipTitle = Text;
+                trayNotifyIcon.BalloonTipText = message;
+                trayNotifyIcon.ShowBalloonTip(3000);
+            }
+        }
+
+        Hide();
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+
+        if (!_appBehavior.Tray.ShowTrayIcon)
+        {
+            trayNotifyIcon.Visible = false;
+        }
     }
 
     private sealed record DeviceStatusInfo(string Status, DateTime Timestamp);
 
     private sealed record GeoMessageView
     {
+        public required string StationId { get; init; }
         public required string DeviceId { get; init; }
         public required string Status { get; init; }
         public required string Time { get; init; }
@@ -495,10 +676,11 @@ public partial class MainForm : Form
         public double HeadingDeg { get; init; }
         public double BatteryPct { get; init; }
 
-        public static GeoMessageView FromMessage(GeoMessage message)
+        public static GeoMessageView FromMessage(GeoMessageDto message, string stationId)
         {
             return new GeoMessageView
             {
+                StationId = stationId,
                 DeviceId = message.DeviceId,
                 Status = message.Status,
                 Latitude = message.Latitude,

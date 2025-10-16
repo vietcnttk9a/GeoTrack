@@ -1,19 +1,19 @@
 using System.Text.Json.Serialization;
 
-namespace GeoTrack;
+namespace GeoTrack.Models;
 
-public sealed class GeoMessage
+public sealed class BuggyDto
 {
+    [JsonPropertyName("stationId")]
+    public string StationId { get; set; } = string.Empty;
+
     [JsonPropertyName("deviceId")]
     public string DeviceId { get; set; } = string.Empty;
 
-    [JsonPropertyName("timestamp")]
-    public DateTime Timestamp { get; set; }
-
-    [JsonPropertyName("lat")]
+    [JsonPropertyName("latitude")]
     public double Latitude { get; set; }
 
-    [JsonPropertyName("lng")]
+    [JsonPropertyName("longitude")]
     public double Longitude { get; set; }
 
     [JsonPropertyName("speedKph")]
@@ -27,4 +27,7 @@ public sealed class GeoMessage
 
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("timestamp")]
+    public DateTime Timestamp { get; set; }
 }
