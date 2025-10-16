@@ -1,0 +1,19 @@
+{
+  "devices": [
+    {
+      "deviceId": "GPS-0001",
+      "host": "127.0.0.1",
+      "port": 5001
+    },
+    {
+      "deviceId": "GPS-0002",
+      "host": "127.0.0.1",
+      "port": 5002
+    },
+    {
+      "deviceId": "GPS-0003",
+      "host": "127.0.0.1",
+      "port": 5003
+    }
+  ]
+}
