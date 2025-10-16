@@ -4,12 +4,12 @@ namespace GeoTrack.Models;
 
 public sealed class TokenResponseDto
 {
-    [JsonPropertyName("access_token")]
+    [JsonPropertyName("accessToken")]
     public string AccessToken { get; set; } = string.Empty;
 
-    [JsonPropertyName("expires_in")]
+    [JsonPropertyName("expireInSeconds")]
     public int ExpiresIn { get; set; }
 
-    [JsonPropertyName("refresh_token")]
+    [JsonPropertyName("refreshToken")]
     public string? RefreshToken { get; set; }
 }

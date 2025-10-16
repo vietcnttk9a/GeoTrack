@@ -87,8 +87,8 @@ public sealed class ExternalAppTokenManager : IDisposable
 
         var payload = new
         {
-            client_id = _config.ClientId,
-            client_secret = _config.ClientSecret
+            clientId = _config.ClientId,
+            seccretToken = _config.SeccretToken
         };
 
         using var response = await SendAsync(() => CreateJsonRequest(HttpMethod.Post, _loginUri, payload), cancellationToken).ConfigureAwait(false);
@@ -104,9 +104,9 @@ public sealed class ExternalAppTokenManager : IDisposable
         var result = await response.Content.ReadFromJsonAsync<CommonResultDto<TokenResponseDto>>(SerializerOptions, cancellationToken).ConfigureAwait(false);
         if (result?.IsSuccessful != true || result.Data == null)
         {
-            StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Authentication failed", DateTime.UtcNow));
-            Log("Login failed: response payload không hợp lệ.");
-            throw new InvalidOperationException("Login response không hợp lệ.");
+            StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Authentication failed:" + result?.Message, DateTime.UtcNow));
+            Log("Login failed: response payload không hợp lệ."+ result?.Message);
+            throw new InvalidOperationException("Login response không hợp lệ:"+ result?.Message);
         }
 
         _currentToken = new ExternalAppToken(

@@ -40,8 +40,8 @@ public sealed class ExternalAppConfigDto
     [JsonPropertyName("clientId")]
     public string ClientId { get; set; } = string.Empty;
 
-    [JsonPropertyName("clientSecret")]
-    public string ClientSecret { get; set; } = string.Empty;
+    [JsonPropertyName("seccretToken")]
+    public string SeccretToken { get; set; } = string.Empty;
 
     [JsonPropertyName("sendIntervalSeconds")]
     public int SendIntervalSeconds { get; set; } = 5;

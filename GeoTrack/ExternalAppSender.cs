@@ -117,7 +117,10 @@ public sealed class ExternalAppSender
         {
             var accessToken = await _tokenManager.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
             var payload = _payloadFactory();
-
+            if(payload.Buggies.Count == 0)
+            {
+                Log("No BuggyData.");
+            }
             using var response = await _httpClient.SendWithRetryAsync(() => CreateRequest(accessToken, payload), _httpConfig, cancellationToken).ConfigureAwait(false);
 
             if (response.IsSuccessStatusCode)

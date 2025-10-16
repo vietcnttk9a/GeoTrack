@@ -7,7 +7,7 @@
   "externalApp": {
     "baseUrl": "http://localhost:5000",
     "clientId": "0e9a1a3a-d422-454f-c883-be117f3d0b0e.152",
-    "clientSecret": "OaljMFcPiRSTmqqObQDPRbTvjfI2On2U",
+    "seccretToken": "OaljMFcPiRSTmqqObQDPRbTvjfI2On2U",
     "sendIntervalSeconds": 5,
     "endpoints": {
       "loginPath": "/api/auth-plugin/auth/login-by-key",
