@@ -1,18 +1,19 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Code\\winform\\GeoTrack\\GeoTrack\\GeoTrack.csproj": {}
+    "C:\\Code\\winform\\GeoTrack\\GpsClient\\GpsClient.csproj": {}
   },
   "projects": {
-    "C:\\Code\\winform\\GeoTrack\\GeoTrack\\GeoTrack.csproj": {
+    "C:\\Code\\winform\\GeoTrack\\GpsClient\\GpsClient.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Code\\winform\\GeoTrack\\GeoTrack\\GeoTrack.csproj",
-        "projectName": "GeoTrack",
-        "projectPath": "C:\\Code\\winform\\GeoTrack\\GeoTrack\\GeoTrack.csproj",
+        "projectUniqueName": "C:\\Code\\winform\\GeoTrack\\GpsClient\\GpsClient.csproj",
+        "projectName": "GpsClient",
+        "projectPath": "C:\\Code\\winform\\GeoTrack\\GpsClient\\GpsClient.csproj",
         "packagesPath": "C:\\Users\\Admin\\.nuget\\packages\\",
-        "outputPath": "C:\\Code\\winform\\GeoTrack\\GeoTrack\\obj\\",
+        "outputPath": "C:\\Code\\winform\\GeoTrack\\GpsClient\\obj\\",
         "projectStyle": "PackageReference",
+        "UsingMicrosoftNETSdk": false,
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
         ],
@@ -22,7 +23,7 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net8.0-windows"
+          "net8.0"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
@@ -31,8 +32,8 @@
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0-windows7.0": {
-            "targetAlias": "net8.0-windows",
+          "net8.0": {
+            "targetAlias": "net8.0",
             "projectReferences": {}
           }
         },
@@ -43,8 +44,8 @@
         }
       },
       "frameworks": {
-        "net8.0-windows7.0": {
-          "targetAlias": "net8.0-windows",
+        "net8.0": {
+          "targetAlias": "net8.0",
           "imports": [
             "net461",
             "net462",
@@ -59,9 +60,6 @@
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
-            },
-            "Microsoft.WindowsDesktop.App.WindowsForms": {
-              "privateAssets": "none"
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.100/PortableRuntimeIdentifierGraph.json"
