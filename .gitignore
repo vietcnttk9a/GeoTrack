@@ -14,4 +14,4 @@
 /GpsClient/.idea/*
 /GeoTrack/.vs/*
 /GeoTrack/obj/*
-/GeoTrack/obj/Debug/net8.0-windows/GeoTrack.AssemblyInfoInputs.cache
+/GeoTrack/obj/*

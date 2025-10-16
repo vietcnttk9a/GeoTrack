@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GpsClient")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5ff3da8d7cf11081d2e58c4e6a44c5818e890c09")]
 [assembly: System.Reflection.AssemblyProductAttribute("GpsClient")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GpsClient")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
