@@ -16,16 +16,19 @@ public sealed class TcpClientWorker
 
     private CancellationTokenSource? _cts;
     private Task? _runningTask;
+    private readonly TimeSpan _reconnectDelay;
 
-    public TcpClientWorker(DeviceEntry device)
+    public TcpClientWorker(DeviceEntry device, TimeSpan reconnectDelay)
     {
         Device = device;
+        _reconnectDelay = reconnectDelay <= TimeSpan.Zero ? TimeSpan.FromSeconds(10) : reconnectDelay;
     }
 
     public DeviceEntry Device { get; }
 
     public event EventHandler<GeoMessageReceivedEventArgs>? MessageReceived;
     public event EventHandler<DeviceStatusChangedEventArgs>? StatusChanged;
+    public event EventHandler<LogMessageEventArgs>? LogGenerated;
 
     public Task? Completion => _runningTask;
 
@@ -55,63 +58,89 @@ public sealed class TcpClientWorker
 
     private async Task RunAsync(CancellationToken cancellationToken)
     {
-        try
+        while (!cancellationToken.IsCancellationRequested)
         {
-            UpdateStatus("Connecting");
-
-            using var client = new TcpClient();
-            await client.ConnectAsync(Device.Host, Device.Port, cancellationToken);
-            UpdateStatus("Connected");
-
-            await using var networkStream = client.GetStream();
-            using var reader = new StreamReader(networkStream, Encoding.UTF8);
-
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                var line = await reader.ReadLineAsync();
-                if (line == null)
-                {
-                    UpdateStatus("Disconnected");
-                    break;
-                }
+                UpdateStatus("Connecting");
+                Log($"Connecting to {Device.Host}:{Device.Port}");
 
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
+                using var client = new TcpClient();
+                await client.ConnectAsync(Device.Host, Device.Port, cancellationToken);
+                UpdateStatus("Connected");
+                Log("Connection established.");
 
-                try
+                await using var networkStream = client.GetStream();
+                using var reader = new StreamReader(networkStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    var messages = JsonSerializer.Deserialize<List<GeoMessage>>(line, SerializerOptions);
-                    if (messages == null)
+                    var line = await reader.ReadLineAsync(cancellationToken);
+                    if (line == null)
+                    {
+                        UpdateStatus("Disconnected");
+                        Log("Connection closed by remote host.");
+                        break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(line))
                     {
                         continue;
                     }
 
-                    foreach (var message in messages)
+                    try
                     {
-                        if (string.IsNullOrWhiteSpace(message.DeviceId))
+                        var messages = JsonSerializer.Deserialize<List<GeoMessage>>(line, SerializerOptions);
+                        if (messages == null)
                         {
-                            message.DeviceId = Device.DeviceId;
+                            continue;
                         }
 
-                        OnMessageReceived(message);
+                        foreach (var message in messages)
+                        {
+                            if (string.IsNullOrWhiteSpace(message.DeviceId))
+                            {
+                                message.DeviceId = Device.DeviceId;
+                            }
+
+                            OnMessageReceived(message);
+                        }
+                    }
+                    catch (JsonException jsonException)
+                    {
+                        Log($"Invalid JSON payload: {jsonException.Message}");
+                        UpdateStatus("Connected");
                     }
                 }
-                catch (JsonException jsonException)
+            }
+            catch (OperationCanceledException)
+            {
+                UpdateStatus("Stopped");
+                Log("Worker stopped.");
+                break;
+            }
+            catch (Exception ex)
+            {
+                UpdateStatus("Disconnected");
+                Log($"Connection error: {ex.Message}");
+            }
+
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                UpdateStatus("Reconnecting...");
+                Log($"Reconnecting in {(int)_reconnectDelay.TotalSeconds} seconds...");
+
+                try
                 {
-                    Console.WriteLine($"[{Device.DeviceId}] Invalid JSON payload: {jsonException.Message}");
-                    UpdateStatus("Connected");
+                    await Task.Delay(_reconnectDelay, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    UpdateStatus("Stopped");
+                    Log("Reconnect cancelled.");
+                    break;
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            UpdateStatus("Stopped");
-        }
-        catch (Exception ex)
-        {
-            UpdateStatus($"Error: {ex.Message}");
         }
     }
 
@@ -123,6 +152,11 @@ public sealed class TcpClientWorker
     private void OnMessageReceived(GeoMessage message)
     {
         MessageReceived?.Invoke(this, new GeoMessageReceivedEventArgs(message, Device));
+    }
+
+    private void Log(string message)
+    {
+        LogGenerated?.Invoke(this, new LogMessageEventArgs(Device.DeviceId, message, DateTime.UtcNow));
     }
 }
 

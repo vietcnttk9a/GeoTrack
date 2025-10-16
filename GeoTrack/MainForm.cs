@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -9,16 +11,23 @@ namespace GeoTrack;
 
 public partial class MainForm : Form
 {
+    private const int MaxLogLines = 500;
+
     private readonly BindingList<GeoMessageView> _visibleMessages = new();
     private readonly List<GeoMessageView> _allMessages = new();
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
+    private readonly Dictionary<string, GeoMessage> _latestMessages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HttpClient _httpClient = new();
+    private ExternalAppTokenManager? _tokenManager;
+    private ExternalAppSender? _externalSender;
     private string? _selectedDeviceFilter;
 
     public MainForm()
     {
         InitializeComponent();
         InitializeGrids();
+        FormClosed += MainForm_FormClosed;
     }
 
     private void InitializeGrids()
@@ -97,6 +106,7 @@ public partial class MainForm : Form
     {
         reloadConfigButton.Enabled = false;
 
+        await StopExternalIntegrationAsync();
         await StopWorkersAsync();
         ClearUiState();
 
@@ -109,8 +119,11 @@ public partial class MainForm : Form
 
             foreach (var device in config.Devices)
             {
-                RegisterDevice(device);
+                var reconnectInterval = GetReconnectInterval(config, device);
+                RegisterDevice(device, reconnectInterval);
             }
+
+            await InitializeExternalAppAsync(config);
         }
         catch (Exception ex)
         {
@@ -122,15 +135,16 @@ public partial class MainForm : Form
         }
     }
 
-    private void RegisterDevice(DeviceEntry device)
+    private void RegisterDevice(DeviceEntry device, TimeSpan reconnectInterval)
     {
         _deviceStatuses[device.DeviceId] = new DeviceStatusInfo("Pending", DateTime.UtcNow);
         UpdateDeviceStatus(device.DeviceId);
         UpdateConnectionSummary();
 
-        var worker = new TcpClientWorker(device);
+        var worker = new TcpClientWorker(device, reconnectInterval);
         worker.MessageReceived += Worker_MessageReceived;
         worker.StatusChanged += Worker_StatusChanged;
+        worker.LogGenerated += OnLogMessage;
         _workers.Add(worker);
 
         worker.Start();
@@ -142,6 +156,7 @@ public partial class MainForm : Form
         {
             worker.MessageReceived -= Worker_MessageReceived;
             worker.StatusChanged -= Worker_StatusChanged;
+            worker.LogGenerated -= OnLogMessage;
             worker.Stop();
         }
 
@@ -165,6 +180,11 @@ public partial class MainForm : Form
         _deviceStatuses.Clear();
         statusListView.Items.Clear();
         connectionStatusLabel.Text = "Connected: 0 / 0 devices";
+        UpdateExternalStatus("Disabled");
+        lock (_latestMessages)
+        {
+            _latestMessages.Clear();
+        }
     }
 
     private void PopulateDeviceFilter(DeviceConfig config)
@@ -206,6 +226,11 @@ public partial class MainForm : Form
 
         var view = GeoMessageView.FromMessage(e.Message);
         _allMessages.Add(view);
+
+        lock (_latestMessages)
+        {
+            _latestMessages[e.Message.DeviceId] = e.Message;
+        }
 
         if (ShouldDisplay(view.DeviceId))
         {
@@ -284,6 +309,177 @@ public partial class MainForm : Form
 
         _visibleMessages.RaiseListChangedEvents = true;
         _visibleMessages.ResetBindings();
+    }
+
+    private async Task StopExternalIntegrationAsync()
+    {
+        if (_externalSender != null)
+        {
+            _externalSender.LogGenerated -= OnLogMessage;
+            _externalSender.StatusChanged -= ExternalStatusChanged;
+            await _externalSender.StopAsync();
+            _externalSender = null;
+        }
+
+        if (_tokenManager != null)
+        {
+            _tokenManager.LogGenerated -= OnLogMessage;
+            _tokenManager.StatusChanged -= ExternalStatusChanged;
+            _tokenManager.Dispose();
+            _tokenManager = null;
+        }
+
+        UpdateExternalStatus("Disabled");
+    }
+
+    private async Task InitializeExternalAppAsync(DeviceConfig config)
+    {
+        if (config.ExternalApp == null)
+        {
+            UpdateExternalStatus("Disabled");
+            return;
+        }
+
+        if (!Uri.TryCreate(config.ExternalApp.BaseUrl, UriKind.Absolute, out var baseUri))
+        {
+            throw new InvalidOperationException($"BaseUrl không hợp lệ: {config.ExternalApp.BaseUrl}");
+        }
+
+        if (_httpClient.BaseAddress == null || _httpClient.BaseAddress != baseUri)
+        {
+            _httpClient.BaseAddress = baseUri;
+        }
+
+        _tokenManager = new ExternalAppTokenManager(_httpClient, config.ExternalApp);
+        _tokenManager.LogGenerated += OnLogMessage;
+        _tokenManager.StatusChanged += ExternalStatusChanged;
+
+        _externalSender = new ExternalAppSender(_httpClient, config.ExternalApp, _tokenManager, CreateTelemetryPayload);
+        _externalSender.LogGenerated += OnLogMessage;
+        _externalSender.StatusChanged += ExternalStatusChanged;
+
+        UpdateExternalStatus("Initializing...");
+
+        try
+        {
+            await _tokenManager.EnsureAuthenticatedAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            LogInfo("ExternalApp", $"Initial login failed: {ex.Message}");
+            UpdateExternalStatus("Authentication failed");
+        }
+
+        try
+        {
+            _externalSender.Start();
+            LogInfo("ExternalApp", "Telemetry sender started.");
+        }
+        catch (Exception ex)
+        {
+            LogInfo("ExternalApp", $"Không thể khởi động sender: {ex.Message}");
+            UpdateExternalStatus("Sender error");
+        }
+    }
+
+    private object CreateTelemetryPayload()
+    {
+        GeoMessage[] snapshot;
+
+        lock (_latestMessages)
+        {
+            snapshot = _latestMessages.Values.Select(message => message).ToArray();
+        }
+
+        var devices = snapshot.Select(message => new
+        {
+            message.DeviceId,
+            message.Latitude,
+            message.Longitude,
+            message.SpeedKph,
+            message.HeadingDeg,
+            message.BatteryPct,
+            message.Status,
+            Timestamp = message.Timestamp
+        }).ToList();
+
+        return new
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Devices = devices
+        };
+    }
+
+    private static TimeSpan GetReconnectInterval(DeviceConfig config, DeviceEntry device)
+    {
+        var seconds = device.ReconnectIntervalSeconds ?? config.ReconnectIntervalSeconds ?? 10;
+        if (seconds <= 0)
+        {
+            seconds = 10;
+        }
+
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    private void ExternalStatusChanged(object? sender, ExternalAppStatusChangedEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<object?, ExternalAppStatusChangedEventArgs>(ExternalStatusChanged), sender, e);
+            return;
+        }
+
+        UpdateExternalStatus($"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})");
+    }
+
+    private void UpdateExternalStatus(string status)
+    {
+        externalStatusLabel.Text = $"External app: {status}";
+    }
+
+    private void OnLogMessage(object? sender, LogMessageEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<object?, LogMessageEventArgs>(OnLogMessage), sender, e);
+            return;
+        }
+
+        AppendLog(e);
+    }
+
+    private void AppendLog(LogMessageEventArgs e)
+    {
+        var line = $"[{e.Timestamp.ToLocalTime():HH:mm:ss}] [{e.Source}] {e.Message}";
+
+        if (logTextBox.TextLength > 0)
+        {
+            logTextBox.AppendText(Environment.NewLine);
+        }
+
+        logTextBox.AppendText(line);
+
+        var lines = logTextBox.Lines;
+        if (lines.Length > MaxLogLines)
+        {
+            logTextBox.Lines = lines.Skip(lines.Length - MaxLogLines).ToArray();
+        }
+
+        logTextBox.SelectionStart = logTextBox.TextLength;
+        logTextBox.SelectionLength = 0;
+        logTextBox.ScrollToCaret();
+    }
+
+    private void LogInfo(string source, string message)
+    {
+        OnLogMessage(this, new LogMessageEventArgs(source, message, DateTime.UtcNow));
+    }
+
+    private async void MainForm_FormClosed(object? sender, FormClosedEventArgs e)
+    {
+        await StopExternalIntegrationAsync();
+        await StopWorkersAsync();
+        _httpClient.Dispose();
     }
 
     private sealed record DeviceStatusInfo(string Status, DateTime Timestamp);

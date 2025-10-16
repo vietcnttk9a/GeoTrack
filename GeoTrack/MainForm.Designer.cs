@@ -36,17 +36,23 @@ namespace GeoTrack
             deviceFilterComboBox = new ComboBox();
             filterLabel = new Label();
             connectionStatusLabel = new Label();
+            externalStatusLabel = new Label();
             statusListView = new ListView();
             deviceColumnHeader = new ColumnHeader();
             statusColumnHeader = new ColumnHeader();
             updatedColumnHeader = new ColumnHeader();
             messagesGrid = new DataGridView();
+            logPanel = new Panel();
+            logTextBox = new TextBox();
+            logLabel = new Label();
             topPanel.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)messagesGrid).BeginInit();
+            logPanel.SuspendLayout();
             SuspendLayout();
-            // 
+            //
             // topPanel
-            // 
+            //
+            topPanel.Controls.Add(externalStatusLabel);
             topPanel.Controls.Add(reloadConfigButton);
             topPanel.Controls.Add(deviceFilterComboBox);
             topPanel.Controls.Add(filterLabel);
@@ -54,11 +60,11 @@ namespace GeoTrack
             topPanel.Dock = DockStyle.Top;
             topPanel.Location = new Point(0, 0);
             topPanel.Name = "topPanel";
-            topPanel.Size = new Size(984, 48);
+            topPanel.Size = new Size(984, 64);
             topPanel.TabIndex = 0;
-            // 
+            //
             // reloadConfigButton
-            // 
+            //
             reloadConfigButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             reloadConfigButton.Location = new Point(863, 10);
             reloadConfigButton.Name = "reloadConfigButton";
@@ -67,9 +73,9 @@ namespace GeoTrack
             reloadConfigButton.Text = "Reload Config";
             reloadConfigButton.UseVisualStyleBackColor = true;
             reloadConfigButton.Click += ReloadConfigButton_Click;
-            // 
+            //
             // deviceFilterComboBox
-            // 
+            //
             deviceFilterComboBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             deviceFilterComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
             deviceFilterComboBox.FormattingEnabled = true;
@@ -78,9 +84,9 @@ namespace GeoTrack
             deviceFilterComboBox.Size = new Size(202, 28);
             deviceFilterComboBox.TabIndex = 2;
             deviceFilterComboBox.SelectedIndexChanged += DeviceFilterComboBox_SelectedIndexChanged;
-            // 
+            //
             // filterLabel
-            // 
+            //
             filterLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             filterLabel.AutoSize = true;
             filterLabel.Location = new Point(570, 15);
@@ -88,70 +94,111 @@ namespace GeoTrack
             filterLabel.Size = new Size(79, 20);
             filterLabel.TabIndex = 1;
             filterLabel.Text = "Device filter";
-            // 
+            //
             // connectionStatusLabel
-            // 
+            //
             connectionStatusLabel.AutoSize = true;
             connectionStatusLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point);
-            connectionStatusLabel.Location = new Point(12, 15);
+            connectionStatusLabel.Location = new Point(12, 12);
             connectionStatusLabel.Name = "connectionStatusLabel";
             connectionStatusLabel.Size = new Size(174, 20);
             connectionStatusLabel.TabIndex = 0;
             connectionStatusLabel.Text = "Connected: 0 / 0 devices";
-            // 
+            //
+            // externalStatusLabel
+            //
+            externalStatusLabel.AutoSize = true;
+            externalStatusLabel.Location = new Point(12, 36);
+            externalStatusLabel.Name = "externalStatusLabel";
+            externalStatusLabel.Size = new Size(176, 20);
+            externalStatusLabel.TabIndex = 4;
+            externalStatusLabel.Text = "External app: Disabled";
+            //
             // statusListView
-            // 
+            //
             statusListView.Columns.AddRange(new ColumnHeader[] { deviceColumnHeader, statusColumnHeader, updatedColumnHeader });
             statusListView.Dock = DockStyle.Top;
             statusListView.FullRowSelect = true;
             statusListView.GridLines = true;
-            statusListView.Location = new Point(0, 48);
+            statusListView.Location = new Point(0, 64);
             statusListView.MultiSelect = false;
             statusListView.Name = "statusListView";
             statusListView.Size = new Size(984, 146);
             statusListView.TabIndex = 1;
             statusListView.UseCompatibleStateImageBehavior = false;
             statusListView.View = View.Details;
-            // 
+            //
             // deviceColumnHeader
-            // 
+            //
             deviceColumnHeader.Text = "Device";
             deviceColumnHeader.Width = 200;
-            // 
+            //
             // statusColumnHeader
-            // 
+            //
             statusColumnHeader.Text = "Status";
             statusColumnHeader.Width = 220;
-            // 
+            //
             // updatedColumnHeader
-            // 
+            //
             updatedColumnHeader.Text = "Updated";
             updatedColumnHeader.Width = 200;
-            // 
+            //
             // messagesGrid
-            // 
+            //
             messagesGrid.AllowUserToAddRows = false;
             messagesGrid.AllowUserToDeleteRows = false;
             messagesGrid.AllowUserToResizeRows = false;
             messagesGrid.BackgroundColor = SystemColors.Window;
             messagesGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             messagesGrid.Dock = DockStyle.Fill;
-            messagesGrid.Location = new Point(0, 194);
+            messagesGrid.Location = new Point(0, 210);
             messagesGrid.MultiSelect = false;
             messagesGrid.Name = "messagesGrid";
             messagesGrid.ReadOnly = true;
             messagesGrid.RowHeadersVisible = false;
             messagesGrid.RowTemplate.Height = 29;
             messagesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            messagesGrid.Size = new Size(984, 467);
+            messagesGrid.Size = new Size(984, 301);
             messagesGrid.TabIndex = 2;
-            // 
+            //
+            // logPanel
+            //
+            logPanel.Controls.Add(logTextBox);
+            logPanel.Controls.Add(logLabel);
+            logPanel.Dock = DockStyle.Bottom;
+            logPanel.Location = new Point(0, 511);
+            logPanel.Name = "logPanel";
+            logPanel.Size = new Size(984, 150);
+            logPanel.TabIndex = 3;
+            //
+            // logTextBox
+            //
+            logTextBox.Dock = DockStyle.Fill;
+            logTextBox.Location = new Point(0, 23);
+            logTextBox.Multiline = true;
+            logTextBox.Name = "logTextBox";
+            logTextBox.ReadOnly = true;
+            logTextBox.ScrollBars = ScrollBars.Vertical;
+            logTextBox.Size = new Size(984, 127);
+            logTextBox.TabIndex = 1;
+            //
+            // logLabel
+            //
+            logLabel.Dock = DockStyle.Top;
+            logLabel.Location = new Point(0, 0);
+            logLabel.Name = "logLabel";
+            logLabel.Size = new Size(984, 23);
+            logLabel.TabIndex = 0;
+            logLabel.Text = "Logs";
+            logLabel.TextAlign = ContentAlignment.MiddleLeft;
+            //
             // MainForm
-            // 
+            //
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(984, 661);
             Controls.Add(messagesGrid);
+            Controls.Add(logPanel);
             Controls.Add(statusListView);
             Controls.Add(topPanel);
             MinimumSize = new Size(800, 500);
@@ -162,6 +209,8 @@ namespace GeoTrack
             topPanel.ResumeLayout(false);
             topPanel.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)messagesGrid).EndInit();
+            logPanel.ResumeLayout(false);
+            logPanel.PerformLayout();
             ResumeLayout(false);
         }
 
@@ -172,10 +221,14 @@ namespace GeoTrack
         private ComboBox deviceFilterComboBox;
         private Label filterLabel;
         private Label connectionStatusLabel;
+        private Label externalStatusLabel;
         private ListView statusListView;
         private ColumnHeader deviceColumnHeader;
         private ColumnHeader statusColumnHeader;
         private ColumnHeader updatedColumnHeader;
         private DataGridView messagesGrid;
+        private Panel logPanel;
+        private TextBox logTextBox;
+        private Label logLabel;
     }
 }
