@@ -1,3 +1,4 @@
+using GeoTrack.Modal;
 using System.Net.Http.Json;
 
 namespace GeoTrack;
@@ -71,7 +72,7 @@ public sealed class ExternalAppTokenManager : IDisposable
         var payload = new LoginRequest
         {
             ClientId = _config.ClientId,
-            ClientSecret = _config.ClientSecret
+            SeccretToken = _config.ClientSecret
         };
 
         using var response = await _httpClient.PostAsJsonAsync("api/auth-plugin/auth/login-by-key", payload, cancellationToken).ConfigureAwait(false);
@@ -83,17 +84,23 @@ public sealed class ExternalAppTokenManager : IDisposable
             throw new InvalidOperationException($"Login failed: {(int)response.StatusCode} {response.ReasonPhrase} {error}");
         }
 
-        var loginResponse = await response.Content.ReadFromJsonAsync<LoginResponse>(cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (loginResponse == null || string.IsNullOrWhiteSpace(loginResponse.AccessToken))
+        var loginResponse = await response.Content.ReadFromJsonAsync<CommonResultDto<LoginResponse>>(cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (loginResponse == null)
         {
             StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Authentication failed", DateTime.UtcNow));
             throw new InvalidOperationException("Login response không hợp lệ.");
         }
+        if (!loginResponse.IsSuccessful)
+        {
+            StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Authentication failed", DateTime.UtcNow));
+            throw new InvalidOperationException("Thông tin đăng nhập không đúng , kiểm tra lại token.");
+        }
+        var result = loginResponse.Data;
 
         _currentToken = new ExternalAppToken(
-            loginResponse.AccessToken,
-            loginResponse.RefreshToken ?? string.Empty,
-            DateTimeOffset.UtcNow.AddSeconds(loginResponse.ExpiresIn)
+            result.AccessToken,
+            result.RefreshToken ?? string.Empty,
+            DateTimeOffset.UtcNow.AddSeconds(result.ExpiresIn)
         );
 
         StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Authenticated", DateTime.UtcNow));
@@ -115,7 +122,7 @@ public sealed class ExternalAppTokenManager : IDisposable
             RefreshToken = _currentToken.RefreshToken
         };
 
-        using var response = await _httpClient.PostAsJsonAsync("auth/refresh", payload, cancellationToken).ConfigureAwait(false);
+        using var response = await _httpClient.PostAsJsonAsync("api/auth-plugin/auth/refresh-token", payload, cancellationToken).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -156,7 +163,7 @@ public sealed class ExternalAppTokenManager : IDisposable
     private sealed class LoginRequest
     {
         public string ClientId { get; set; } = string.Empty;
-        public string ClientSecret { get; set; } = string.Empty;
+        public string SeccretToken { get; set; } = string.Empty;
     }
 
     private sealed class LoginResponse

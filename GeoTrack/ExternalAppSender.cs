@@ -94,7 +94,7 @@ public sealed class ExternalAppSender
             var accessToken = await _tokenManager.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
             var payload = _payloadFactory();
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, "telemetry");
+            using var request = new HttpRequestMessage(HttpMethod.Post, "api/golf/check-location/telemetry");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = JsonContent.Create(payload, options: SerializerOptions);
 

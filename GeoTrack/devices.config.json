@@ -17,9 +17,9 @@
     }
   ],
   "externalApp": {
-    "baseUrl": "https://api.example.com",
-    "clientId": "my-client-id",
-    "clientSecret": "my-client-secret",
+    "baseUrl": "http://localhost:5000",
+    "clientId": "0e9a1a3a-d422-454f-c883-be117f3d0b0e.152",
+    "clientSecret": "OaljMFcPiRSTmqqObQDPRbTvjfI2On2U",
     "sendIntervalSeconds": 5
   }
 }
