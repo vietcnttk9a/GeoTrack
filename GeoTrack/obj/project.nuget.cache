@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "dgSpecHash": "PzoqM9CTq7g=",
+  "success": false,
+  "projectFilePath": "C:\\Code\\winform\\GeoTrack\\GeoTrack\\GeoTrack.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1302",
+      "level": "Error",
+      "message": "You are running the 'restore' operation with an 'HTTP' source: http://nuget.orenda.vn/v3/index.json. NuGet requires HTTPS sources. To use an HTTP source, you must explicitly set 'allowInsecureConnections' to true in your NuGet.Config file. Refer to https://aka.ms/nuget-https-everywhere for more information."
+    }
+  ]
+}
