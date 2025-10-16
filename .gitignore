@@ -2,12 +2,16 @@
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
-/GeoTrack/.vs
-/GeoTrack/obj/Debug/net8.0-windows/GeoTrack.assets.cache
-/GeoTrack/obj/Release/net8.0-windows
-/GeoTrack/obj
-/GpsClient/.idea/.idea.GpsClient/.idea/vcs.xml
-/GpsClient/.vs
-/GpsClient/obj/Release/net8.0
-/GeoTrack/bin/Debug/net8.0-windows
-/GpsClient/.idea/.idea.GpsClient/.idea/vcs.xml
+/GpsClient/.vs/*
+/GpsClient/bin/*
+/GpsClient/obj/*
+
+/GeoTrack/.vs/*
+/GeoTrack/bin/*
+/GeoTrack/obj/*
+/.vs/*
+/GeoTrack/.vs/*
+/GpsClient/.idea/*
+/GeoTrack/.vs/*
+/GeoTrack/obj/*
+/GeoTrack/obj/Debug/net8.0-windows/GeoTrack.AssemblyInfoInputs.cache
