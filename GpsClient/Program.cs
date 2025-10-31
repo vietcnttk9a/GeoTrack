@@ -73,8 +73,8 @@ internal sealed class Program
         {
             var message = new GeoReading
             {
-                DeviceId = options.DeviceId,
-                Timestamp = DateTime.UtcNow,
+                Id = options.DeviceId,
+                Datetime = DateTime.UtcNow,
                 Latitude = NextDouble(random, MinLatitude, MaxLatitude),
                 Longitude = NextDouble(random, MinLongitude, MaxLongitude),
                 SpeedKph = Math.Round(NextDouble(random, 0, 120), 2),
@@ -167,9 +167,12 @@ internal sealed class Program
 
     private sealed class GeoReading
     {
-        public string DeviceId { get; set; } = string.Empty;
+        /// <summary>
+        /// DeviceId
+        /// </summary>
+        public string Id { get; set; } = string.Empty;
 
-        public DateTime Timestamp { get; set; }
+        public DateTime Datetime { get; set; }
 
         public double Lat
         {
@@ -182,6 +185,7 @@ internal sealed class Program
             get => Longitude;
             set => Longitude = value;
         }
+        public double Sats { get; set; }
 
         public double Latitude { get; set; }
         public double Longitude { get; set; }

@@ -15,6 +15,8 @@ public sealed class BuggyDto
 
     [JsonPropertyName("longitude")]
     public double Longitude { get; set; }
+    [JsonPropertyName("sats")]
+    public double Sats { get; set; }
 
     [JsonPropertyName("speedKph")]
     public double SpeedKph { get; set; }

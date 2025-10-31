@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -78,11 +79,18 @@ public partial class MainForm : Form
             Width = 110,
             DefaultCellStyle = { Format = "F5" }
         });
-
+       
         messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Lng",
             DataPropertyName = nameof(GeoMessageView.Longitude),
+            Width = 110,
+            DefaultCellStyle = { Format = "F5" }
+        });
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Sats",
+            DataPropertyName = nameof(GeoMessageView.Sats),
             Width = 110,
             DefaultCellStyle = { Format = "F5" }
         });
@@ -672,6 +680,7 @@ public partial class MainForm : Form
         public required string Time { get; init; }
         public double Latitude { get; init; }
         public double Longitude { get; init; }
+        public double Sats { get; set; }
         public double SpeedKph { get; init; }
         public double HeadingDeg { get; init; }
         public double BatteryPct { get; init; }
@@ -685,6 +694,7 @@ public partial class MainForm : Form
                 Status = message.Status,
                 Latitude = message.Latitude,
                 Longitude = message.Longitude,
+                Sats = message.Sats,
                 SpeedKph = message.SpeedKph,
                 HeadingDeg = message.HeadingDeg,
                 BatteryPct = message.BatteryPct,
