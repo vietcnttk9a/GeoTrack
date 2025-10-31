@@ -4,10 +4,10 @@ namespace GeoTrack.Models;
 
 public sealed class GeoMessageDto
 {
-    [JsonPropertyName("deviceId")]
+    [JsonPropertyName("id")]
     public string DeviceId { get; set; } = string.Empty;
 
-    [JsonPropertyName("timestamp")]
+    [JsonPropertyName("datetime")]
     public DateTime Timestamp { get; set; }
 
     [JsonPropertyName("lat")]
