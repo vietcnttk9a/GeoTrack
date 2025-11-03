@@ -1,8 +1,8 @@
 using System.Text.Json.Serialization;
 
-namespace GeoTrack.Models;
+namespace GpsClient.Models;
 
-public sealed class GeoMessageDto
+public sealed class GpsPositionDto
 {
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;

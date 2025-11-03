@@ -6,6 +6,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GpsClient", "GpsClient\GpsC
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GeoTrack", "GeoTrack\GeoTrack.csproj", "{0ADEAFBC-E8D0-41D3-A635-35E0B3AC5508}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GpsClient.Tests", "GpsClient.Tests\GpsClient.Tests.csproj", "{BEF903F7-3079-4DA3-BC7C-C2B9CA8EB770}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GeoTrack.Tests", "GeoTrack.Tests\GeoTrack.Tests.csproj", "{E6F70ECB-68C4-48A0-8B81-86D25E65FF8E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,6 +24,14 @@ Global
 		{0ADEAFBC-E8D0-41D3-A635-35E0B3AC5508}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0ADEAFBC-E8D0-41D3-A635-35E0B3AC5508}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0ADEAFBC-E8D0-41D3-A635-35E0B3AC5508}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BEF903F7-3079-4DA3-BC7C-C2B9CA8EB770}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BEF903F7-3079-4DA3-BC7C-C2B9CA8EB770}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BEF903F7-3079-4DA3-BC7C-C2B9CA8EB770}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BEF903F7-3079-4DA3-BC7C-C2B9CA8EB770}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E6F70ECB-68C4-48A0-8B81-86D25E65FF8E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E6F70ECB-68C4-48A0-8B81-86D25E65FF8E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E6F70ECB-68C4-48A0-8B81-86D25E65FF8E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E6F70ECB-68C4-48A0-8B81-86D25E65FF8E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

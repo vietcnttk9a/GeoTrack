@@ -9,6 +9,8 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using GeoTrack.Config;
+using GeoTrack.Domain;
 using GeoTrack.Models;
 
 namespace GeoTrack;
@@ -22,6 +24,10 @@ public partial class MainForm : Form
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
     private readonly BuggyRepository _buggyRepository = new();
+
+    private TrackingOptions _trackingOptions = new();
+    private InMemoryDeviceWindowStore _deviceWindowStore = new();
+    private GeoTrackService? _geoTrackService;
 
     private DeviceConfigDto? _currentConfig;
     private AppBehaviorConfigDto _appBehavior = new();
@@ -91,32 +97,7 @@ public partial class MainForm : Form
         {
             HeaderText = "Sats",
             DataPropertyName = nameof(GeoMessageView.Sats),
-            Width = 110,
-            DefaultCellStyle = { Format = "F5" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Speed (kph)",
-            DataPropertyName = nameof(GeoMessageView.SpeedKph),
-            Width = 110,
-            DefaultCellStyle = { Format = "F1" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Heading",
-            DataPropertyName = nameof(GeoMessageView.HeadingDeg),
-            Width = 90,
-            DefaultCellStyle = { Format = "F0" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Battery (%)",
-            DataPropertyName = nameof(GeoMessageView.BatteryPct),
-            Width = 110,
-            DefaultCellStyle = { Format = "F0" }
+            Width = 110
         });
 
         messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
@@ -145,6 +126,9 @@ public partial class MainForm : Form
             var config = await ConfigLoader.LoadAsync(configPath).ConfigureAwait(true);
             _currentConfig = config;
             _appBehavior = config.AppBehavior ?? new AppBehaviorConfigDto();
+            _trackingOptions = config.Tracking ?? new TrackingOptions();
+            _deviceWindowStore = new InMemoryDeviceWindowStore();
+            _geoTrackService = new GeoTrackService(_deviceWindowStore, _trackingOptions, LogTrackingInfo, LogTrackingWarning);
 
             EnsureTrayIcon();
 
@@ -388,9 +372,22 @@ public partial class MainForm : Form
             return;
         }
 
-        _buggyRepository.Update(e.Device.StationId, e.Message);
+        var message = e.Message;
+        var deviceId = string.IsNullOrWhiteSpace(message.Id) ? e.Device.StationId : message.Id;
+        message.Id = deviceId;
+        var timestamp = DateTime.SpecifyKind(message.Datetime, DateTimeKind.Utc);
+        message.Datetime = timestamp;
 
-        var view = GeoMessageView.FromMessage(e.Message, e.Device.StationId);
+        var status = _geoTrackService?.OnPosition(deviceId, new Position
+        {
+            Lat = message.Lat,
+            Lng = message.Lng,
+            Timestamp = timestamp
+        }) ?? DeviceStatus.Unknown;
+
+        _buggyRepository.Update(e.Device.StationId, message, status);
+
+        var view = GeoMessageView.FromMessage(message, e.Device.StationId, status);
         _allMessages.Add(view);
 
         if (ShouldDisplay(view.StationId))
@@ -534,6 +531,10 @@ public partial class MainForm : Form
     {
         OnLogMessage(this, new LogMessageEventArgs(source, message, DateTime.UtcNow));
     }
+
+    private void LogTrackingInfo(string message) => LogInfo("Tracking", message);
+
+    private void LogTrackingWarning(string message) => LogInfo("TrackingWarning", message);
 
     private void ReloadConfigButton_Click(object? sender, EventArgs e)
     {
@@ -680,25 +681,19 @@ public partial class MainForm : Form
         public required string Time { get; init; }
         public double Latitude { get; init; }
         public double Longitude { get; init; }
-        public double Sats { get; set; }
-        public double SpeedKph { get; init; }
-        public double HeadingDeg { get; init; }
-        public double BatteryPct { get; init; }
+        public int Sats { get; init; }
 
-        public static GeoMessageView FromMessage(GeoMessageDto message, string stationId)
+        public static GeoMessageView FromMessage(GeoMessageDto message, string stationId, DeviceStatus status)
         {
             return new GeoMessageView
             {
                 StationId = stationId,
-                DeviceId = message.DeviceId,
-                Status = message.Status,
-                Latitude = message.Latitude,
-                Longitude = message.Longitude,
+                DeviceId = message.Id,
+                Status = status.ToString(),
+                Latitude = message.Lat,
+                Longitude = message.Lng,
                 Sats = message.Sats,
-                SpeedKph = message.SpeedKph,
-                HeadingDeg = message.HeadingDeg,
-                BatteryPct = message.BatteryPct,
-                Time = message.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                Time = message.Datetime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
             };
         }
     }

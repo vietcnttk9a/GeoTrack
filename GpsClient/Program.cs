@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using GpsClient.Models;
 
 namespace GpsClient;
 
@@ -71,16 +72,13 @@ internal sealed class Program
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var message = new GeoReading
+            var message = new GpsPositionDto
             {
                 Id = options.DeviceId,
                 Datetime = DateTime.UtcNow,
-                Latitude = NextDouble(random, MinLatitude, MaxLatitude),
-                Longitude = NextDouble(random, MinLongitude, MaxLongitude),
-                SpeedKph = Math.Round(NextDouble(random, 0, 120), 2),
-                HeadingDeg = Math.Round(NextDouble(random, 0, 360), 2),
-                BatteryPct = Math.Round(NextDouble(random, 25, 100), 1),
-                Status = PickStatus(random)
+                Lat = NextDouble(random, MinLatitude, MaxLatitude),
+                Lng = NextDouble(random, MinLongitude, MaxLongitude),
+                Sats = random.Next(6, 16)
             };
 
             var json = JsonSerializer.Serialize(new[] { message }, JsonOptions);
@@ -109,16 +107,6 @@ internal sealed class Program
     private static double NextDouble(Random random, double minValue, double maxValue)
     {
         return minValue + (random.NextDouble() * (maxValue - minValue));
-    }
-
-    private static string PickStatus(Random random)
-    {
-        return random.Next(0, 3) switch
-        {
-            0 => "OK",
-            1 => "MOVING",
-            _ => "IDLE"
-        };
     }
 
     private sealed class CommandLineOptions
@@ -165,33 +153,4 @@ internal sealed class Program
         }
     }
 
-    private sealed class GeoReading
-    {
-        /// <summary>
-        /// DeviceId
-        /// </summary>
-        public string Id { get; set; } = string.Empty;
-
-        public DateTime Datetime { get; set; }
-
-        public double Lat
-        {
-            get => Latitude;
-            set => Latitude = value;
-        }
-
-        public double Lng
-        {
-            get => Longitude;
-            set => Longitude = value;
-        }
-        public double Sats { get; set; }
-
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
-        public double SpeedKph { get; set; }
-        public double HeadingDeg { get; set; }
-        public double BatteryPct { get; set; }
-        public string Status { get; set; } = "OK";
-    }
 }

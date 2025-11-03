@@ -87,9 +87,9 @@ public sealed class TcpClientWorker
 
                         foreach (var message in messages)
                         {
-                            if (string.IsNullOrWhiteSpace(message.DeviceId))
+                            if (string.IsNullOrWhiteSpace(message.Id))
                             {
-                                message.DeviceId = Device.StationId;
+                                message.Id = Device.StationId;
                             }
 
                             OnMessageReceived(message);

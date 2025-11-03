@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
+using GeoTrack.Domain;
 using GeoTrack.Models;
 
 namespace GeoTrack;
@@ -9,28 +10,25 @@ public sealed class BuggyRepository
 {
     private readonly ConcurrentDictionary<string, BuggyDto> _buggies = new(StringComparer.OrdinalIgnoreCase);
 
-    public void Update(string stationId, GeoMessageDto message)
+    public void Update(string stationId, GeoMessageDto message, DeviceStatus status)
     {
         if (string.IsNullOrWhiteSpace(stationId))
         {
-            stationId = message.DeviceId;
+            stationId = message.Id;
         }
 
         var buggy = new BuggyDto
         {
             StationId = stationId,
-            DeviceId = string.IsNullOrWhiteSpace(message.DeviceId) ? stationId : message.DeviceId,
-            Latitude = message.Latitude,
-            Longitude = message.Longitude,
+            Id = string.IsNullOrWhiteSpace(message.Id) ? stationId : message.Id,
+            Lat = message.Lat,
+            Lng = message.Lng,
             Sats = message.Sats,
-            SpeedKph = message.SpeedKph,
-            HeadingDeg = message.HeadingDeg,
-            BatteryPct = message.BatteryPct,
-            Status = message.Status,
-            Timestamp = message.Timestamp
+            Status = status.ToString(),
+            Datetime = message.Datetime
         };
 
-        _buggies[buggy.DeviceId] = buggy;
+        _buggies[buggy.Id] = buggy;
     }
 
     public IReadOnlyCollection<BuggyDto> Snapshot()
@@ -39,15 +37,12 @@ public sealed class BuggyRepository
             .Select(buggy => new BuggyDto
             {
                 StationId = buggy.StationId,
-                DeviceId = buggy.DeviceId,
-                Latitude = buggy.Latitude,
-                Longitude = buggy.Longitude,
-                SpeedKph = buggy.SpeedKph,
+                Id = buggy.Id,
+                Lat = buggy.Lat,
+                Lng = buggy.Lng,
                 Sats = buggy.Sats,
-                HeadingDeg = buggy.HeadingDeg,
-                BatteryPct = buggy.BatteryPct,
                 Status = buggy.Status,
-                Timestamp = buggy.Timestamp
+                Datetime = buggy.Datetime
             })
             .ToList();
     }

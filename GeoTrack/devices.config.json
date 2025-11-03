@@ -25,6 +25,15 @@
     "maxDelaySeconds": 60,
     "useExponentialBackoff": true
   },
+  "tracking": {
+    "windowSeconds": 10,
+    "maxDistanceStationaryMeters": 10,
+    "speedThresholdMovingMps": 1.0,
+    "speedThresholdStationaryMps": 0.5,
+    "confirmCount": 2,
+    "outlierJumpMeters": 200,
+    "minPoints": 3
+  },
   "appBehavior": {
     "runInBackgroundWhenHidden": true,
     "startMinimized": false,

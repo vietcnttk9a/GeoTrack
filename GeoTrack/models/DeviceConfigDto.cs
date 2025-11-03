@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using GeoTrack.Config;
 
 namespace GeoTrack.Models;
 
@@ -15,6 +16,9 @@ public sealed class DeviceConfigDto
 
     [JsonPropertyName("appBehavior")]
     public AppBehaviorConfigDto? AppBehavior { get; set; }
+
+    [JsonPropertyName("tracking")]
+    public TrackingOptions? Tracking { get; set; }
 }
 
 public sealed class DeviceEntryDto
