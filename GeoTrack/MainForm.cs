@@ -5,7 +5,6 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -17,13 +16,13 @@ public partial class MainForm : Form
 {
     private const int MaxLogLines = 500;
 
-    private readonly BindingList<GeoMessageView> _visibleMessages = new();
-    private readonly List<GeoMessageView> _allMessages = new();
+    private readonly BindingList<BuggySnapshotView> _buggySnapshots = new();
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
     private readonly BuggyRepository _buggyRepository = new();
-    
 
+
+    private string _lastExternalSendStatus = string.Empty;
     private DeviceConfigDto? _currentConfig;
     private AppBehaviorConfigDto _appBehavior = new();
     private CancellationTokenSource? _appCts;
@@ -49,83 +48,84 @@ public partial class MainForm : Form
 
     private void InitializeGrids()
     {
-        messagesGrid.AutoGenerateColumns = false;
-        messagesGrid.DataSource = _visibleMessages;
+        InitializeSnapshotGrid(filteredGrid, includeExternalSend: false);
+        InitializeSnapshotGrid(telemetryGrid, includeExternalSend: true);
+    }
 
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+    private void InitializeSnapshotGrid(DataGridView grid, bool includeExternalSend)
+    {
+        grid.AutoGenerateColumns = false;
+        grid.DataSource = _buggySnapshots;
+        grid.Columns.Clear();
+
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Time",
-            DataPropertyName = nameof(GeoMessageView.Time),
+            DataPropertyName = nameof(BuggySnapshotView.Time),
             Width = 160
         });
 
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Station",
-            DataPropertyName = nameof(GeoMessageView.StationId),
+            DataPropertyName = nameof(BuggySnapshotView.Station),
             Width = 120
         });
 
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Device",
-            DataPropertyName = nameof(GeoMessageView.DeviceId),
+            DataPropertyName = nameof(BuggySnapshotView.Device),
             Width = 120
         });
 
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
-            HeaderText = "Lat",
-            DataPropertyName = nameof(GeoMessageView.Latitude),
+            HeaderText = "Latitude",
+            DataPropertyName = nameof(BuggySnapshotView.Latitude),
             Width = 110,
             DefaultCellStyle = { Format = "F5" }
         });
-       
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
-            HeaderText = "Lng",
-            DataPropertyName = nameof(GeoMessageView.Longitude),
+            HeaderText = "Longitude",
+            DataPropertyName = nameof(BuggySnapshotView.Longitude),
             Width = 110,
             DefaultCellStyle = { Format = "F5" }
         });
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Sats",
-            DataPropertyName = nameof(GeoMessageView.Sats),
-            Width = 110,
-            DefaultCellStyle = { Format = "F5" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Speed (kph)",
-            DataPropertyName = nameof(GeoMessageView.SpeedKph),
-            Width = 110,
-            DefaultCellStyle = { Format = "F1" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Heading",
-            DataPropertyName = nameof(GeoMessageView.HeadingDeg),
+            DataPropertyName = nameof(BuggySnapshotView.Sats),
             Width = 90,
             DefaultCellStyle = { Format = "F0" }
         });
 
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Battery (%)",
-            DataPropertyName = nameof(GeoMessageView.BatteryPct),
-            Width = 110,
-            DefaultCellStyle = { Format = "F0" }
-        });
-
-        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Status",
-            DataPropertyName = nameof(GeoMessageView.Status),
-            Width = 110
+            DataPropertyName = nameof(BuggySnapshotView.Status),
+            Width = 90
         });
+
+        grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "IdleDuration (s)",
+            DataPropertyName = nameof(BuggySnapshotView.IdleDurationSeconds),
+            Width = 130
+        });
+
+        if (includeExternalSend)
+        {
+            grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "External Send",
+                DataPropertyName = nameof(BuggySnapshotView.ExternalSendStatus),
+                Width = 180
+            });
+        }
     }
 
     private async void MainForm_Load(object? sender, EventArgs e)
@@ -390,14 +390,7 @@ public partial class MainForm : Form
         }
 
         _buggyRepository.Update(e.Device.StationId, e.Message);
-
-        var view = GeoMessageView.FromMessage(e.Message, e.Device.StationId);
-        _allMessages.Add(view);
-
-        if (ShouldDisplay(view.StationId))
-        {
-            _visibleMessages.Add(view);
-        }
+        RefreshBuggySnapshotList();
     }
 
     private void Worker_StatusChanged(object? sender, DeviceStatusChangedEventArgs e)
@@ -456,24 +449,7 @@ public partial class MainForm : Form
             _selectedStationFilter = deviceFilterComboBox.SelectedItem?.ToString();
         }
 
-        ApplyFilter();
-    }
-
-    private void ApplyFilter()
-    {
-        _visibleMessages.RaiseListChangedEvents = false;
-        _visibleMessages.Clear();
-
-        foreach (var message in _allMessages)
-        {
-            if (ShouldDisplay(message.StationId))
-            {
-                _visibleMessages.Add(message);
-            }
-        }
-
-        _visibleMessages.RaiseListChangedEvents = true;
-        _visibleMessages.ResetBindings();
+        RefreshBuggySnapshotList();
     }
 
     private bool ShouldDisplay(string stationId)
@@ -489,7 +465,10 @@ public partial class MainForm : Form
             return;
         }
 
-        UpdateExternalStatus($"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})");
+        var statusText = $"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})";
+        UpdateExternalStatus(statusText);
+        _lastExternalSendStatus = statusText;
+        RefreshBuggySnapshotList();
         UpdateTrayMenu();
     }
 
@@ -543,13 +522,13 @@ public partial class MainForm : Form
 
     private void ClearUiState()
     {
-        _allMessages.Clear();
-        _visibleMessages.Clear();
+        _buggySnapshots.Clear();
         _deviceStatuses.Clear();
         statusListView.Items.Clear();
         connectionStatusLabel.Text = "Connected: 0 / 0 devices";
         UpdateExternalStatus("Disabled");
         _buggyRepository.Clear();
+        _lastExternalSendStatus = string.Empty;
     }
 
     private void MainForm_Resize(object? sender, EventArgs e)
@@ -673,33 +652,52 @@ public partial class MainForm : Form
 
     private sealed record DeviceStatusInfo(string Status, DateTime Timestamp);
 
-    private sealed record GeoMessageView
+    private void RefreshBuggySnapshotList()
     {
-        public required string StationId { get; init; }
-        public required string DeviceId { get; init; }
-        public required string Status { get; init; }
+        var snapshot = _buggyRepository.Snapshot();
+        var filtered = snapshot
+            .Where(b => ShouldDisplay(b.StationId))
+            .OrderByDescending(b => b.Timestamp)
+            .Select(b => BuggySnapshotView.FromBuggyDto(b, _lastExternalSendStatus))
+            .ToList();
+
+        _buggySnapshots.RaiseListChangedEvents = false;
+        _buggySnapshots.Clear();
+
+        foreach (var item in filtered)
+        {
+            _buggySnapshots.Add(item);
+        }
+
+        _buggySnapshots.RaiseListChangedEvents = true;
+        _buggySnapshots.ResetBindings();
+    }
+
+    private sealed class BuggySnapshotView
+    {
         public required string Time { get; init; }
+        public required string Station { get; init; }
+        public required string Device { get; init; }
         public double Latitude { get; init; }
         public double Longitude { get; init; }
-        public double Sats { get; set; }
-        public double SpeedKph { get; init; }
-        public double HeadingDeg { get; init; }
-        public double BatteryPct { get; init; }
+        public double Sats { get; init; }
+        public string Status { get; init; } = string.Empty;
+        public int IdleDurationSeconds { get; init; }
+        public string ExternalSendStatus { get; init; } = string.Empty;
 
-        public static GeoMessageView FromMessage(GeoMessageDto message, string stationId)
+        public static BuggySnapshotView FromBuggyDto(BuggyDto buggy, string externalSendStatus)
         {
-            return new GeoMessageView
+            return new BuggySnapshotView
             {
-                StationId = stationId,
-                DeviceId = message.DeviceId,
-                Status = message.Status,
-                Latitude = message.Latitude,
-                Longitude = message.Longitude,
-                Sats = message.Sats,
-                SpeedKph = message.SpeedKph,
-                HeadingDeg = message.HeadingDeg,
-                BatteryPct = message.BatteryPct,
-                Time = message.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                Time = buggy.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                Station = buggy.StationId,
+                Device = buggy.DeviceId,
+                Latitude = buggy.Latitude,
+                Longitude = buggy.Longitude,
+                Sats = buggy.Sats,
+                Status = buggy.Status,
+                IdleDurationSeconds = buggy.IdleDurationSeconds,
+                ExternalSendStatus = externalSendStatus
             };
         }
     }

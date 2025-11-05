@@ -42,7 +42,11 @@ namespace GeoTrack
             deviceColumnHeader = new ColumnHeader();
             statusColumnHeader = new ColumnHeader();
             updatedColumnHeader = new ColumnHeader();
-            messagesGrid = new DataGridView();
+            mainTabControl = new TabControl();
+            filteredTabPage = new TabPage();
+            filteredGrid = new DataGridView();
+            telemetryTabPage = new TabPage();
+            telemetryGrid = new DataGridView();
             logPanel = new Panel();
             logTextBox = new TextBox();
             logLabel = new Label();
@@ -52,7 +56,10 @@ namespace GeoTrack
             exitMenuItem = new ToolStripMenuItem();
             trayNotifyIcon = new NotifyIcon(components);
             topPanel.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)messagesGrid).BeginInit();
+            filteredTabPage.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)filteredGrid).BeginInit();
+            telemetryTabPage.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)telemetryGrid).BeginInit();
             logPanel.SuspendLayout();
             trayContextMenu.SuspendLayout();
             SuspendLayout();
@@ -150,23 +157,74 @@ namespace GeoTrack
             updatedColumnHeader.Text = "Updated";
             updatedColumnHeader.Width = 200;
             //
-            // messagesGrid
+            // mainTabControl
             //
-            messagesGrid.AllowUserToAddRows = false;
-            messagesGrid.AllowUserToDeleteRows = false;
-            messagesGrid.AllowUserToResizeRows = false;
-            messagesGrid.BackgroundColor = SystemColors.Window;
-            messagesGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            messagesGrid.Dock = DockStyle.Fill;
-            messagesGrid.Location = new Point(0, 210);
-            messagesGrid.MultiSelect = false;
-            messagesGrid.Name = "messagesGrid";
-            messagesGrid.ReadOnly = true;
-            messagesGrid.RowHeadersVisible = false;
-            messagesGrid.RowTemplate.Height = 29;
-            messagesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            messagesGrid.Size = new Size(984, 301);
-            messagesGrid.TabIndex = 2;
+            mainTabControl.Controls.Add(filteredTabPage);
+            mainTabControl.Controls.Add(telemetryTabPage);
+            mainTabControl.Dock = DockStyle.Fill;
+            mainTabControl.Location = new Point(0, 210);
+            mainTabControl.Name = "mainTabControl";
+            mainTabControl.SelectedIndex = 0;
+            mainTabControl.Size = new Size(984, 301);
+            mainTabControl.TabIndex = 2;
+            //
+            // filteredTabPage
+            //
+            filteredTabPage.Controls.Add(filteredGrid);
+            filteredTabPage.Location = new Point(4, 29);
+            filteredTabPage.Name = "filteredTabPage";
+            filteredTabPage.Padding = new Padding(3);
+            filteredTabPage.Size = new Size(976, 268);
+            filteredTabPage.TabIndex = 0;
+            filteredTabPage.Text = "Filtered Buggies";
+            filteredTabPage.UseVisualStyleBackColor = true;
+            //
+            // filteredGrid
+            //
+            filteredGrid.AllowUserToAddRows = false;
+            filteredGrid.AllowUserToDeleteRows = false;
+            filteredGrid.AllowUserToResizeRows = false;
+            filteredGrid.BackgroundColor = SystemColors.Window;
+            filteredGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            filteredGrid.Dock = DockStyle.Fill;
+            filteredGrid.Location = new Point(3, 3);
+            filteredGrid.MultiSelect = false;
+            filteredGrid.Name = "filteredGrid";
+            filteredGrid.ReadOnly = true;
+            filteredGrid.RowHeadersVisible = false;
+            filteredGrid.RowTemplate.Height = 29;
+            filteredGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            filteredGrid.Size = new Size(970, 262);
+            filteredGrid.TabIndex = 0;
+            //
+            // telemetryTabPage
+            //
+            telemetryTabPage.Controls.Add(telemetryGrid);
+            telemetryTabPage.Location = new Point(4, 29);
+            telemetryTabPage.Name = "telemetryTabPage";
+            telemetryTabPage.Padding = new Padding(3);
+            telemetryTabPage.Size = new Size(976, 268);
+            telemetryTabPage.TabIndex = 1;
+            telemetryTabPage.Text = "Telemetry";
+            telemetryTabPage.UseVisualStyleBackColor = true;
+            //
+            // telemetryGrid
+            //
+            telemetryGrid.AllowUserToAddRows = false;
+            telemetryGrid.AllowUserToDeleteRows = false;
+            telemetryGrid.AllowUserToResizeRows = false;
+            telemetryGrid.BackgroundColor = SystemColors.Window;
+            telemetryGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            telemetryGrid.Dock = DockStyle.Fill;
+            telemetryGrid.Location = new Point(3, 3);
+            telemetryGrid.MultiSelect = false;
+            telemetryGrid.Name = "telemetryGrid";
+            telemetryGrid.ReadOnly = true;
+            telemetryGrid.RowHeadersVisible = false;
+            telemetryGrid.RowTemplate.Height = 29;
+            telemetryGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            telemetryGrid.Size = new Size(970, 262);
+            telemetryGrid.TabIndex = 0;
             //
             // logPanel
             //
@@ -240,7 +298,7 @@ namespace GeoTrack
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(984, 661);
-            Controls.Add(messagesGrid);
+            Controls.Add(mainTabControl);
             Controls.Add(logPanel);
             Controls.Add(statusListView);
             Controls.Add(topPanel);
@@ -253,7 +311,10 @@ namespace GeoTrack
             Resize += MainForm_Resize;
             topPanel.ResumeLayout(false);
             topPanel.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)messagesGrid).EndInit();
+            filteredTabPage.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)filteredGrid).EndInit();
+            telemetryTabPage.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)telemetryGrid).EndInit();
             logPanel.ResumeLayout(false);
             logPanel.PerformLayout();
             trayContextMenu.ResumeLayout(false);
@@ -272,7 +333,11 @@ namespace GeoTrack
         private ColumnHeader deviceColumnHeader;
         private ColumnHeader statusColumnHeader;
         private ColumnHeader updatedColumnHeader;
-        private DataGridView messagesGrid;
+        private TabControl mainTabControl;
+        private TabPage filteredTabPage;
+        private DataGridView filteredGrid;
+        private TabPage telemetryTabPage;
+        private DataGridView telemetryGrid;
         private Panel logPanel;
         private TextBox logTextBox;
         private Label logLabel;

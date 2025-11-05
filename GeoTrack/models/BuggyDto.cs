@@ -30,6 +30,9 @@ public sealed class BuggyDto
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;
 
+    [JsonPropertyName("idleDurationSeconds")]
+    public int IdleDurationSeconds { get; set; }
+
     [JsonPropertyName("timestamp")]
     public DateTime Timestamp { get; set; }
 }
