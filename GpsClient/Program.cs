@@ -2,489 +2,324 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace GpsClient
+namespace GpsClient;
+
+internal sealed class Program
 {
-    internal sealed class Program
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        // Thời gian giữa hai lần gửi (5s)
-        private static readonly TimeSpan SendInterval = TimeSpan.FromSeconds(5);
+        WriteIndented = false
+    };
 
-        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions ConfigOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly (double Lat, double Lng)[] HoleCoordinates =
+    {
+        (20.97381234081408, 105.39408802986146),
+        (20.97266026779571, 105.39425969123842),
+        (20.971327859231653, 105.39372324943544),
+        (20.96854278643389, 105.39591193199158),
+        (20.970255912893922, 105.39561152458192),
+        (20.97381234081408, 105.39484977722168)
+    };
+
+    private static async Task Main()
+    {
+        var config = await LoadConfigAsync().ConfigureAwait(false);
+
+        if (config.Devices.Count == 0)
         {
-            WriteIndented = false
+            Console.WriteLine("No devices configured. Update gpsclient.config.json and restart.");
+            return;
+        }
+
+        var interval = TimeSpan.FromSeconds(Math.Max(1, config.SendIntervalSeconds));
+
+        using var cts = new CancellationTokenSource();
+
+        Console.CancelKeyPress += (sender, eventArgs) =>
+        {
+            Console.WriteLine("Stopping client...");
+            eventArgs.Cancel = true;
+            cts.Cancel();
         };
 
-        // Danh sách tọa độ 6 hố (1E -> 6E)
-        // Index 0 = hố 1E, 1 = 2E, ...
-        private static readonly (double Lat, double Lng)[] HoleCoordinates =
+        var simulationStates = CreateInitialSimulationStates(config.Devices);
+        var random = new Random();
+
+        while (!cts.IsCancellationRequested)
         {
-            (20.97381234081408, 105.39408802986146), // 1E
-            (20.97266026779571, 105.39425969123842), // 2E
-            (20.971327859231653, 105.39372324943544), // 3E
-            (20.96854278643389, 105.39591193199158), // 4E
-            (20.970255912893922, 105.39561152458192), // 5E
-            (20.97381234081408, 105.39484977722168)  // 6E
-        };
-
-        private static async Task Main(string[] args)
-        {
-            var options = CommandLineOptions.Parse(args);
-
-            if (!options.Ports.Any())
-            {
-                Console.WriteLine("No ports provided. Use --port 5001 or --ports 5001,5002,5003");
-                return;
-            }
-
-            if (!options.DeviceIds.Any())
-            {
-                Console.WriteLine("No deviceIds configured. Use --deviceIds 001,002,003");
-                return;
-            }
-
-            using var cts = new CancellationTokenSource();
-
-            Console.CancelKeyPress += (sender, eventArgs) =>
-            {
-                Console.WriteLine("Cancellation requested. Stopping listeners...");
-                eventArgs.Cancel = true;
-                cts.Cancel();
-            };
-
-            var listenerTasks = new List<Task>();
-            var listeners = new List<TcpListener>();
-
-            var distinctPorts = options.Ports.Distinct().ToList();
-            var deviceIdsInfo = string.Join(",", options.DeviceIds);
-
-            foreach (var port in distinctPorts)
-            {
-                var listener = new TcpListener(options.BindAddress, port);
-                try
-                {
-                    listener.Start();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to start listener on {options.BindAddress}:{port} - {ex.Message}");
-                    continue;
-                }
-
-                listeners.Add(listener);
-                Console.WriteLine(
-                    $"Station listening on {options.BindAddress}:{port} with devices [{deviceIdsInfo}]");
-
-                listenerTasks.Add(RunListenerAsync(listener, options.DeviceIds, cts.Token));
-            }
-
-            if (!listenerTasks.Any())
-            {
-                Console.WriteLine("No listener started. Exiting.");
-                return;
-            }
-
-            Console.WriteLine("Press Ctrl+C to stop all listeners.");
-
+            TcpClient? client = null;
             try
             {
-                await Task.WhenAll(listenerTasks);
+                Console.WriteLine($"Connecting to {config.ServerHost}:{config.ServerPort} ...");
+                client = new TcpClient();
+                await client.ConnectAsync(config.ServerHost, config.ServerPort, cts.Token).ConfigureAwait(false);
+                client.NoDelay = true;
+                Console.WriteLine("Connected to GeoTrack server.");
+
+                await RunSendLoopAsync(client, config, simulationStates, random, interval, cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                // Ignore, shutting down
+                break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Connection error: {ex.Message}");
             }
             finally
             {
-                foreach (var listener in listeners)
+                if (client != null)
                 {
                     try
                     {
-                        listener.Stop();
+                        client.Close();
+                        client.Dispose();
                     }
                     catch
                     {
-                        // ignore
+                        // ignored
                     }
                 }
-
-                Console.WriteLine("All listeners stopped.");
             }
-        }
 
-        private static async Task RunListenerAsync(
-            TcpListener listener,
-            IReadOnlyList<string> deviceIds,
-            CancellationToken cancellationToken)
-        {
-            var localEndPoint = (IPEndPoint)listener.LocalEndpoint;
-            var port = localEndPoint.Port;
-
-            while (!cancellationToken.IsCancellationRequested)
+            if (cts.IsCancellationRequested)
             {
-                TcpClient client;
-                try
-                {
-                    Console.WriteLine(
-                        $"[Station] Waiting for GeoTrack to connect on {localEndPoint.Address}:{port} ...");
-                    client = await listener.AcceptTcpClientAsync();
-                }
-                catch (ObjectDisposedException)
-                {
-                    // listener đã stop
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    Console.WriteLine($"[Station] Error accepting client on port {port}: {ex.Message}");
-                    await Task.Delay(500, cancellationToken).ContinueWith(_ => { }, cancellationToken);
-                    continue;
-                }
-
-                Console.WriteLine(
-                    $"[Station] GeoTrack connected from {client.Client.RemoteEndPoint} on port {port}. Starting stream...");
-
-                _ = HandleClientAsync(client, deviceIds, cancellationToken);
+                break;
             }
 
-            Console.WriteLine($"[Station] Listener loop on port {port} finished.");
+            Console.WriteLine("Retrying in 3 seconds...");
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
 
-        private static async Task HandleClientAsync(
-            TcpClient client,
-            IReadOnlyList<string> deviceIds,
-            CancellationToken cancellationToken)
+        Console.WriteLine("GpsClient stopped.");
+    }
+
+    private static async Task RunSendLoopAsync(
+        TcpClient client,
+        GpsClientConfig config,
+        Dictionary<string, DeviceSimulationState> simulationStates,
+        Random random,
+        TimeSpan interval,
+        CancellationToken cancellationToken)
+    {
+        await using var networkStream = client.GetStream();
+
+        while (!cancellationToken.IsCancellationRequested)
         {
-            client.NoDelay = true;
+            var now = DateTime.UtcNow;
+            var messages = new List<GeoReading>(config.Devices.Count);
 
-            await using var networkStream = client.GetStream();
-            using var writer = new StreamWriter(networkStream, Encoding.UTF8) { AutoFlush = true };
+            foreach (var deviceId in config.Devices)
+            {
+                var (lat, lng) = GetNextPosition(deviceId, simulationStates);
+                var message = new GeoReading
+                {
+                    Id = deviceId,
+                    Datetime = now.ToString("O"),
+                    Lat = lat,
+                    Lng = lng,
+                    Sats = random.Next(8, 16)
+                };
 
-            var random = new Random();
+                messages.Add(message);
+            }
 
-            // Mỗi connection có một bộ state giả lập riêng cho từng thiết bị
-            var simulationStates = CreateInitialSimulationStates(deviceIds);
+            var json = JsonSerializer.Serialize(messages, JsonOptions) + "\n";
+            var buffer = Encoding.UTF8.GetBytes(json);
 
             try
             {
-                while (!cancellationToken.IsCancellationRequested && client.Connected)
-                {
-                    var now = DateTime.UtcNow;
-
-                    // Mỗi lần gửi: 1 mảng nhiều thiết bị (001,002,003,...)
-                    var messages = new List<GeoReading>(deviceIds.Count);
-                    foreach (var id in deviceIds)
-                    {
-                        var (lat, lng) = GetNextPosition(id, simulationStates);
-
-                        var message = new GeoReading
-                        {
-                            Id = id,                // "001", "002", "003", ...
-                            Datetime = now,         // "2025-11-05T14:30:00Z"
-                            Lat = lat,
-                            Lng = lng,
-                            Sats = random.Next(8, 16) // 8–15 vệ tinh
-                        };
-
-                        messages.Add(message);
-                    }
-
-                    var json = JsonSerializer.Serialize(messages, JsonOptions);
-
-                    try
-                    {
-                        await writer.WriteLineAsync(json);
-                    }
-                    catch (IOException)
-                    {
-                        Console.WriteLine("[Station] GeoTrack disconnected (write failed).");
-                        break;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        Console.WriteLine("[Station] Network stream disposed.");
-                        break;
-                    }
-
-                    try
-                    {
-                        await Task.Delay(SendInterval, cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                }
+                await networkStream.WriteAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
             }
-            finally
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
             {
-                try
-                {
-                    client.Close();
-                }
-                catch
-                {
-                    // ignore
-                }
+                Console.WriteLine($"Disconnected while sending: {ex.Message}");
+                break;
+            }
 
-                Console.WriteLine("[Station] Connection closed.");
+            try
+            {
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
         }
+    }
 
-        // --- Logic giả lập di chuyển qua các hố ------------------------------
+    private static async Task<GpsClientConfig> LoadConfigAsync()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "gpsclient.config.json");
 
-        /// <summary>
-        /// Mỗi device có 1 state:
-        /// - CurrentHoleIndex: đang ở hố nào (0..5)
-        /// - IsStopping: đang dừng tại hố hay đang di chuyển
-        /// - StopTicks: số lần gửi giữ nguyên tọa độ tại mỗi hố
-        ///   (001: 6 tick = 30s, 002: 7 tick = 35s, 003: 8 tick = 40s, ...)
-        /// - RemainingStopTicks: còn bao nhiêu tick dừng
-        /// - MoveStepIndex: bước nội suy giữa 2 hố
-        /// </summary>
-        private sealed class DeviceSimulationState
+        if (!File.Exists(path))
         {
-            public int CurrentHoleIndex { get; set; }
-            public bool IsStopping { get; set; }
-            public int StopTicks { get; set; }
-            public int RemainingStopTicks { get; set; }
-            public int MoveStepIndex { get; set; }
+            Console.WriteLine($"Configuration file not found at '{path}'. Using defaults.");
+            var fallback = new GpsClientConfig();
+            fallback.Normalize();
+            return fallback;
         }
 
-        private static Dictionary<string, DeviceSimulationState> CreateInitialSimulationStates(IReadOnlyList<string> deviceIds)
+        await using var stream = File.OpenRead(path);
+        try
         {
-            var dict = new Dictionary<string, DeviceSimulationState>(StringComparer.OrdinalIgnoreCase);
+            var config = await JsonSerializer.DeserializeAsync<GpsClientConfig>(stream, ConfigOptions).ConfigureAwait(false)
+                         ?? new GpsClientConfig();
+            config.Normalize();
+            return config;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to parse configuration file: {ex.Message}. Using defaults.");
+            var fallback = new GpsClientConfig();
+            fallback.Normalize();
+            return fallback;
+        }
+    }
 
-            // Mặc định:
-            // device 0 (001) -> dừng 30s (6 tick)
-            // device 1 (002) -> dừng 35s (7 tick)
-            // device 2 (003) -> dừng 40s (8 tick)
-            for (var i = 0; i < deviceIds.Count; i++)
+    private sealed class DeviceSimulationState
+    {
+        public int CurrentHoleIndex { get; set; }
+        public bool IsStopping { get; set; }
+        public int StopTicks { get; set; }
+        public int RemainingStopTicks { get; set; }
+        public int MoveStepIndex { get; set; }
+    }
+
+    private static Dictionary<string, DeviceSimulationState> CreateInitialSimulationStates(IReadOnlyList<string> deviceIds)
+    {
+        var dict = new Dictionary<string, DeviceSimulationState>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < deviceIds.Count; i++)
+        {
+            var id = deviceIds[i];
+            var stopTicks = 6 + i;
+
+            dict[id] = new DeviceSimulationState
             {
-                var id = deviceIds[i];
-                var stopTicks = 6 + i; // 5s * (6 + i)
-
-                dict[id] = new DeviceSimulationState
-                {
-                    CurrentHoleIndex = 0,   // bắt đầu từ hố 1E
-                    IsStopping = true,      // mới vào hố -> đang dừng
-                    StopTicks = stopTicks,
-                    RemainingStopTicks = stopTicks,
-                    MoveStepIndex = 0
-                };
-            }
-
-            return dict;
+                CurrentHoleIndex = 0,
+                IsStopping = true,
+                StopTicks = stopTicks,
+                RemainingStopTicks = stopTicks,
+                MoveStepIndex = 0
+            };
         }
 
-        private static (double Lat, double Lng) GetNextPosition(
-            string deviceId,
-            Dictionary<string, DeviceSimulationState> states)
+        return dict;
+    }
+
+    private static (double Lat, double Lng) GetNextPosition(
+        string deviceId,
+        Dictionary<string, DeviceSimulationState> states)
+    {
+        if (!states.TryGetValue(deviceId, out var state))
         {
-            if (!states.TryGetValue(deviceId, out var state))
+            state = new DeviceSimulationState
             {
-                // fallback: nếu vì lý do gì đó chưa có state
-                state = new DeviceSimulationState
-                {
-                    CurrentHoleIndex = 0,
-                    IsStopping = true,
-                    StopTicks = 6,
-                    RemainingStopTicks = 6,
-                    MoveStepIndex = 0
-                };
-                states[deviceId] = state;
-            }
+                CurrentHoleIndex = 0,
+                IsStopping = true,
+                StopTicks = 6,
+                RemainingStopTicks = 6,
+                MoveStepIndex = 0
+            };
+            states[deviceId] = state;
+        }
 
-            var from = HoleCoordinates[state.CurrentHoleIndex];
+        var from = HoleCoordinates[state.CurrentHoleIndex];
 
-            // Đang dừng tại hố
-            if (state.IsStopping)
+        if (state.IsStopping)
+        {
+            state.RemainingStopTicks--;
+
+            if (state.RemainingStopTicks <= 0)
             {
-                state.RemainingStopTicks--;
-
-                if (state.RemainingStopTicks <= 0)
-                {
-                    // Hết thời gian dừng -> chuẩn bị di chuyển sang hố tiếp theo
-                    state.IsStopping = false;
-                    state.MoveStepIndex = 0;
-                }
-
-                return from;
-            }
-
-            // Đang di chuyển từ hố hiện tại sang hố tiếp theo
-            var toIndex = (state.CurrentHoleIndex + 1) % HoleCoordinates.Length;
-            var to = HoleCoordinates[toIndex];
-
-            const int MoveStepsBetweenHoles = 6; // 6 bước = 6*5s = 30s di chuyển
-
-            var step = Math.Min(state.MoveStepIndex, MoveStepsBetweenHoles);
-            var t = (double)step / MoveStepsBetweenHoles;
-
-            var lat = from.Lat + (to.Lat - from.Lat) * t;
-            var lng = from.Lng + (to.Lng - from.Lng) * t;
-
-            state.MoveStepIndex++;
-
-            // Đã đến hố tiếp theo
-            if (state.MoveStepIndex > MoveStepsBetweenHoles)
-            {
-                state.CurrentHoleIndex = toIndex;
-                state.IsStopping = true;
-                state.RemainingStopTicks = state.StopTicks;
+                state.IsStopping = false;
                 state.MoveStepIndex = 0;
             }
 
-            return (lat, lng);
+            return from;
         }
 
-        // --- CLI options -----------------------------------------------------
+        var toIndex = (state.CurrentHoleIndex + 1) % HoleCoordinates.Length;
+        var to = HoleCoordinates[toIndex];
 
-        private sealed class CommandLineOptions
+        const int MoveStepsBetweenHoles = 6;
+
+        var step = Math.Min(state.MoveStepIndex, MoveStepsBetweenHoles);
+        var t = (double)step / MoveStepsBetweenHoles;
+
+        var lat = from.Lat + (to.Lat - from.Lat) * t;
+        var lng = from.Lng + (to.Lng - from.Lng) * t;
+
+        state.MoveStepIndex++;
+
+        if (state.MoveStepIndex > MoveStepsBetweenHoles)
         {
-            public List<int> Ports { get; }
-            public IPAddress BindAddress { get; }
-            public List<string> DeviceIds { get; }
-
-            public CommandLineOptions(
-                IEnumerable<int> ports,
-                IPAddress bindAddress,
-                IEnumerable<string> deviceIds)
-            {
-                Ports = ports.ToList();
-                BindAddress = bindAddress;
-                DeviceIds = deviceIds.ToList();
-            }
-
-            public static CommandLineOptions Parse(string[] args)
-            {
-                // default: 3 port 5001,5002,5003, loopback, 3 thiết bị 001/002/003
-                var ports = new List<int> { 5001, 5002, 5003 };
-                var bindAddress = IPAddress.Loopback;
-                var deviceIds = new List<string> { "001", "002", "003" };
-
-                for (var i = 0; i < args.Length; i++)
-                {
-                    var arg = args[i];
-
-                    if (string.Equals(arg, "--ports", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                    {
-                        var raw = args[++i];
-                        ports = ParsePorts(raw);
-                    }
-                    else if (string.Equals(arg, "--port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                    {
-                        if (int.TryParse(args[++i], out var singlePort))
-                        {
-                            ports = new List<int> { singlePort };
-                        }
-                    }
-                    else if (string.Equals(arg, "--deviceIds", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                    {
-                        var raw = args[++i];
-                        var ids = raw
-                            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .ToList();
-                        if (ids.Any())
-                        {
-                            deviceIds = ids;
-                        }
-                    }
-                    else if (string.Equals(arg, "--deviceId", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                    {
-                        // Backward compatible: 1 thiết bị
-                        var id = args[++i];
-                        deviceIds = new List<string> { id };
-                    }
-                    else if (string.Equals(arg, "--bind", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-                    {
-                        var ip = args[++i];
-                        if (!IPAddress.TryParse(ip, out var parsed))
-                        {
-                            Console.WriteLine($"Invalid bind address '{ip}', using loopback.");
-                        }
-                        else
-                        {
-                            bindAddress = parsed;
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Unrecognized argument '{arg}'.");
-                    }
-                }
-
-                return new CommandLineOptions(ports, bindAddress, deviceIds);
-            }
-
-            // Hỗ trợ:
-            //  - "5001"
-            //  - "5001,5002,5005"
-            //  - "5001-5005"
-            //  - mix: "5001,5003-5005"
-            private static List<int> ParsePorts(string raw)
-            {
-                var list = new List<int>();
-
-                var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-                foreach (var p in parts)
-                {
-                    if (p.Contains('-'))
-                    {
-                        var bounds = p.Split('-', StringSplitOptions.TrimEntries);
-                        if (bounds.Length == 2 &&
-                            int.TryParse(bounds[0], out var start) &&
-                            int.TryParse(bounds[1], out var end))
-                        {
-                            if (start > end)
-                            {
-                                (start, end) = (end, start);
-                            }
-
-                            for (var x = start; x <= end; x++)
-                            {
-                                list.Add(x);
-                            }
-                        }
-                    }
-                    else if (int.TryParse(p, out var port))
-                    {
-                        list.Add(port);
-                    }
-                }
-
-                return list;
-            }
+            state.CurrentHoleIndex = toIndex;
+            state.IsStopping = true;
+            state.RemainingStopTicks = state.StopTicks;
+            state.MoveStepIndex = 0;
         }
 
-        // --- DTO gửi lên GeoTrack --------------------------------------------
+        return (lat, lng);
+    }
 
-        private sealed class GeoReading
+    private sealed class GpsClientConfig
+    {
+        public string ServerHost { get; set; } = "127.0.0.1";
+        public int ServerPort { get; set; } = 5099;
+        public int SendIntervalSeconds { get; set; } = 5;
+        public List<string> Devices { get; set; } = new() { "001", "002", "003" };
+
+        public void Normalize()
         {
-            // "id": "001"
-            public string Id { get; set; } = string.Empty;
+            if (string.IsNullOrWhiteSpace(ServerHost))
+            {
+                ServerHost = "127.0.0.1";
+            }
 
-            // "datetime": "2025-11-05T14:30:00Z"
-            public DateTime Datetime { get; set; }
+            if (ServerPort <= 0)
+            {
+                ServerPort = 5099;
+            }
 
-            // "lat": ...
-            public double Lat { get; set; }
+            if (SendIntervalSeconds <= 0)
+            {
+                SendIntervalSeconds = 5;
+            }
 
-            // "lng": ...
-            public double Lng { get; set; }
-
-            // "sats": 12
-            public int Sats { get; set; }
+            Devices = Devices
+                .Select(d => d?.Trim())
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
+    }
+
+    private sealed class GeoReading
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Datetime { get; set; } = string.Empty;
+        public double Lat { get; set; }
+        public double Lng { get; set; }
+        public int Sats { get; set; }
     }
 }

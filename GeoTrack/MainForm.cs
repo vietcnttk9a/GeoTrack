@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +24,6 @@ public partial class MainForm : Form
     private readonly BindingList<BuggySnapshotView> _buggySnapshots = new();
     private readonly BindingList<TelemetrySendHistoryView> _telemetryHistory = new();
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<TcpClientWorker> _workers = new();
     private readonly BuggyRepository _buggyRepository = new();
 
 
@@ -35,6 +35,7 @@ public partial class MainForm : Form
     private HttpClient? _httpClient;
     private ExternalAppTokenManager? _tokenManager;
     private ExternalAppSender? _externalSender;
+    private TcpServer? _tcpServer;
     private string? _selectedStationFilter;
     private bool _allowClose;
 
@@ -210,14 +211,44 @@ public partial class MainForm : Form
 
             PopulateDeviceFilter(config);
 
-            if (config.Devices.Count > 0)
+            if (_appCts == null)
             {
                 _appCts = new CancellationTokenSource();
+            }
 
-                foreach (var device in config.Devices)
-                {
-                    RegisterDevice(device);
-                }
+            var listenIpString = config.Server?.ListenIp;
+            if (string.IsNullOrWhiteSpace(listenIpString))
+            {
+                listenIpString = "0.0.0.0";
+            }
+
+            if (!IPAddress.TryParse(listenIpString, out var listenIp))
+            {
+                LogInfo("TcpServer", $"Invalid listen IP '{listenIpString}', fallback to 0.0.0.0");
+                listenIp = IPAddress.Any;
+            }
+
+            var listenPort = config.Server?.ListenPort ?? 5099;
+            if (listenPort <= 0)
+            {
+                LogInfo("TcpServer", $"Invalid listen port '{listenPort}', fallback to 5099");
+                listenPort = 5099;
+            }
+
+            _tcpServer = new TcpServer(listenIp, listenPort);
+            _tcpServer.LogGenerated += OnLogMessage;
+            _tcpServer.MessageReceived += Worker_MessageReceived;
+            _tcpServer.ClientConnected += Worker_StatusChanged;
+            _tcpServer.ClientDisconnected += Worker_StatusChanged;
+
+            try
+            {
+                _tcpServer.Start(_appCts.Token);
+                LogInfo("TcpServer", $"Server started on {listenIp}:{listenPort}");
+            }
+            catch (Exception ex)
+            {
+                LogInfo("TcpServer", $"Cannot start server: {ex.Message}");
             }
 
             await InitializeExternalAppAsync(config).ConfigureAwait(true);
@@ -246,8 +277,26 @@ public partial class MainForm : Form
             _appCts.Cancel();
         }
 
+        if (_tcpServer != null)
+        {
+            try
+            {
+                await _tcpServer.StopAsync().ConfigureAwait(true);
+            }
+            catch
+            {
+                // Ignored
+            }
+
+            _tcpServer.LogGenerated -= OnLogMessage;
+            _tcpServer.MessageReceived -= Worker_MessageReceived;
+            _tcpServer.ClientConnected -= Worker_StatusChanged;
+            _tcpServer.ClientDisconnected -= Worker_StatusChanged;
+            _tcpServer.Dispose();
+            _tcpServer = null;
+        }
+
         var tasks = new List<Task>();
-        tasks.AddRange(_workers.Select(worker => worker.Completion ?? Task.CompletedTask));
         if (_externalSender?.Completion != null)
         {
             tasks.Add(_externalSender.Completion);
@@ -261,14 +310,6 @@ public partial class MainForm : Form
         {
             // Ignored
         }
-
-        foreach (var worker in _workers)
-        {
-            worker.MessageReceived -= Worker_MessageReceived;
-            worker.StatusChanged -= Worker_StatusChanged;
-            worker.LogGenerated -= OnLogMessage;
-        }
-        _workers.Clear();
 
         if (_externalSender != null)
         {
@@ -298,56 +339,6 @@ public partial class MainForm : Form
         UpdateTrayMenu();
     }
 
-    private void RegisterDevice(DeviceEntryDto device)
-    {
-        if (_appCts == null)
-        {
-            return;
-        }
-
-        _deviceStatuses[device.StationId] = new DeviceStatusInfo("Pending", DateTime.UtcNow);
-        UpdateDeviceStatus(device.StationId);
-        UpdateConnectionSummary();
-
-        var worker = new TcpClientWorker(device, CreateReconnectSettings(device));
-        worker.MessageReceived += Worker_MessageReceived;
-        worker.StatusChanged += Worker_StatusChanged;
-        worker.LogGenerated += OnLogMessage;
-        _workers.Add(worker);
-        worker.Start(_appCts.Token);
-    }
-
-    private ReconnectSettings CreateReconnectSettings(DeviceEntryDto device)
-    {
-        var deviceReconnect = device.Reconnect;
-        var globalReconnect = _currentConfig?.Reconnect;
-
-        int initialSeconds = deviceReconnect?.InitialDelaySeconds
-            ?? globalReconnect?.InitialDelaySeconds
-            ?? 10;
-        if (initialSeconds <= 0)
-        {
-            initialSeconds = 10;
-        }
-
-        int maxSeconds = deviceReconnect?.MaxDelaySeconds
-            ?? globalReconnect?.MaxDelaySeconds
-            ?? 60;
-        if (maxSeconds < initialSeconds)
-        {
-            maxSeconds = initialSeconds;
-        }
-
-        var useExponential = deviceReconnect?.UseExponentialBackoff
-            ?? globalReconnect?.UseExponentialBackoff
-            ?? true;
-
-        return new ReconnectSettings(
-            TimeSpan.FromSeconds(initialSeconds),
-            TimeSpan.FromSeconds(maxSeconds),
-            useExponential);
-    }
-
     private void PopulateDeviceFilter(DeviceConfigDto config)
     {
         deviceFilterComboBox.Items.Clear();
@@ -355,7 +346,7 @@ public partial class MainForm : Form
 
         foreach (var device in config.Devices)
         {
-            deviceFilterComboBox.Items.Add(device.StationId);
+            EnsureStationFilterContains(device.StationId);
         }
 
         if (deviceFilterComboBox.Items.Count > 0)
@@ -494,6 +485,8 @@ public partial class MainForm : Form
 
     private void UpdateDeviceStatus(string stationId)
     {
+        EnsureStationFilterContains(stationId);
+
         if (!_deviceStatuses.TryGetValue(stationId, out var status))
         {
             return;
@@ -522,6 +515,24 @@ public partial class MainForm : Form
         var connected = _deviceStatuses.Values.Count(status => string.Equals(status.Status, "Connected", StringComparison.OrdinalIgnoreCase));
         var total = _deviceStatuses.Count;
         connectionStatusLabel.Text = $"Connected: {connected} / {total} devices";
+    }
+
+    private void EnsureStationFilterContains(string? stationId)
+    {
+        if (string.IsNullOrWhiteSpace(stationId))
+        {
+            return;
+        }
+
+        var exists = deviceFilterComboBox.Items
+            .Cast<object>()
+            .Skip(1)
+            .Any(item => string.Equals(item?.ToString(), stationId, StringComparison.OrdinalIgnoreCase));
+
+        if (!exists)
+        {
+            deviceFilterComboBox.Items.Add(stationId);
+        }
     }
 
     private void DeviceFilterComboBox_SelectedIndexChanged(object? sender, EventArgs e)

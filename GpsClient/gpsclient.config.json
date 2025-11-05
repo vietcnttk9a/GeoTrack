@@ -1,0 +1,10 @@
+{
+  "serverHost": "127.0.0.1",
+  "serverPort": 5099,
+  "sendIntervalSeconds": 5,
+  "devices": [
+    "001",
+    "002",
+    "003"
+  ]
+}

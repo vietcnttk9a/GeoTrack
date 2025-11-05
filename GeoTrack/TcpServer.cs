@@ -1,172 +1,301 @@
-﻿using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using GeoTrack.Models;
 
-namespace GeoTrack
+namespace GeoTrack;
+
+public sealed class TcpServer : IDisposable
 {
-    public sealed class TcpServer : IDisposable
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
-        private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
-        {
-            PropertyNameCaseInsensitive = true
-        };
+        PropertyNameCaseInsensitive = true
+    };
 
-        private readonly TcpListener _listener;
-        private readonly ConcurrentDictionary<Guid, TcpClient> _clients = new();
-        private CancellationTokenSource? _cts;
-        private Task? _acceptLoop;
+    private readonly TcpListener _listener;
+    private readonly ConcurrentDictionary<Guid, ClientContext> _clients = new();
+    private CancellationTokenSource? _cts;
+    private Task? _acceptLoop;
 
-        public TcpServer(IPAddress ipAddress, int port)
+    public TcpServer(IPAddress ipAddress, int port)
+    {
+        _listener = new TcpListener(ipAddress, port);
+    }
+
+    public event EventHandler<GeoMessageReceivedEventArgs>? MessageReceived;
+    public event EventHandler<LogMessageEventArgs>? LogGenerated;
+    public event EventHandler<DeviceStatusChangedEventArgs>? ClientConnected;
+    public event EventHandler<DeviceStatusChangedEventArgs>? ClientDisconnected;
+
+    public void Start(CancellationToken cancellationToken)
+    {
+        if (_acceptLoop != null && !_acceptLoop.IsCompleted)
         {
-            _listener = new TcpListener(ipAddress, port);
+            throw new InvalidOperationException("Server already started.");
         }
 
-        public event EventHandler<GeoMessageReceivedEventArgs>? MessageReceived;
-        public event EventHandler<LogMessageEventArgs>? LogGenerated;
-        public event EventHandler<DeviceStatusChangedEventArgs>? ClientConnected; // reuse DeviceStatusChangedEventArgs but DeviceEntryDto may be null
-        public event EventHandler<DeviceStatusChangedEventArgs>? ClientDisconnected;
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _listener.Start();
+        Log($"Server listening on {_listener.LocalEndpoint}");
+        _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token), CancellationToken.None);
+    }
 
-        public void Start(CancellationToken cancellationToken)
+    public async Task StopAsync()
+    {
+        try
         {
-            if (_acceptLoop != null && !_acceptLoop.IsCompleted)
-            {
-                throw new InvalidOperationException("Server already started.");
-            }
-
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _listener.Start();
-            Log($"TCP server started on {_listener.LocalEndpoint}");
-            _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token), _cts.Token);
+            _cts?.Cancel();
+        }
+        catch
+        {
+            // ignored
         }
 
-        public async Task StopAsync()
+        try
+        {
+            _listener.Stop();
+        }
+        catch
+        {
+            // ignored
+        }
+
+        foreach (var kvp in _clients)
         {
             try
             {
-                _cts?.Cancel();
-                _listener.Stop();
-                foreach (var kv in _clients)
-                {
-                    try { kv.Value.Close(); kv.Value.Dispose(); } catch { }
-                }
-                _clients.Clear();
-                if (_acceptLoop != null) await _acceptLoop.ConfigureAwait(false);
+                kvp.Value.Client.Close();
+                kvp.Value.Client.Dispose();
             }
-            catch { /* ignore */ }
-        }
-
-        private async Task AcceptLoopAsync(CancellationToken cancellationToken)
-        {
-            try
+            catch
             {
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    var client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                    var id = Guid.NewGuid();
-                    _clients[id] = client;
-
-                    var remote = client.Client.RemoteEndPoint?.ToString() ?? id.ToString();
-                    Log($"Client connected: {remote}");
-                    ClientConnected?.Invoke(this, new DeviceStatusChangedEventArgs(new DeviceEntryDto { StationId = remote, Host = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(), Port = ((IPEndPoint)client.Client.RemoteEndPoint!).Port }, "Connected", DateTime.UtcNow));
-
-                    _ = Task.Run(() => HandleClientAsync(id, client, cancellationToken), cancellationToken);
-                }
-            }
-            catch (OperationCanceledException) { /* stopped */ }
-            catch (Exception ex)
-            {
-                Log($"Accept loop error: {ex.Message}");
+                // ignored
             }
         }
 
-        private async Task HandleClientAsync(Guid id, TcpClient client, CancellationToken cancellationToken)
+        _clients.Clear();
+
+        if (_acceptLoop != null)
         {
-            var remote = client.Client.RemoteEndPoint?.ToString() ?? id.ToString();
             try
             {
-                using var networkStream = client.GetStream();
-                using var reader = new StreamReader(networkStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    var line = await reader.ReadLineAsync().ConfigureAwait(false);
-                    if (line == null) break;
-
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-
-                    try
-                    {
-                        // Expecting line to be a JSON array of GeoMessageDto like existing client
-                        var messages = JsonSerializer.Deserialize<List<GeoMessageDto>>(line, SerializerOptions);
-                        if (messages == null) continue;
-
-                        foreach (var message in messages)
-                        {
-                            // If payload contains no DeviceId, we can set DeviceId to remote endpoint (or to a stationId field if provided)
-                            if (string.IsNullOrWhiteSpace(message.DeviceId))
-                            {
-                                // attempt to use a field named "stationId" if client included (not in GeoMessageDto by default)
-                                message.DeviceId = remote;
-                            }
-
-                            // stationId we will pass as remote endpoint string (client may include stationId in the payload, but keep remote as fallback)
-                            var stationId = remote;
-                            OnMessageReceived(message, stationId);
-                        }
-                    }
-                    catch (JsonException jsonEx)
-                    {
-                        Log($"Invalid JSON from {remote}: {jsonEx.Message}");
-                    }
-                }
+                await _acceptLoop.ConfigureAwait(false);
             }
-            catch (IOException) { /* connection closed */ }
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
-                Log($"Client {remote} error: {ex.Message}");
+                // ignored
             }
-            finally
+            catch
             {
+                // ignored
+            }
+
+            _acceptLoop = null;
+        }
+
+        _cts?.Dispose();
+        _cts = null;
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            StopAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                TcpClient client;
                 try
                 {
-                    client.Close();
-                    client.Dispose();
+                    client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
                 }
-                catch { }
-                _clients.TryRemove(id, out _);
-                Log($"Client disconnected: {remote}");
-                ClientDisconnected?.Invoke(this, new DeviceStatusChangedEventArgs(new DeviceEntryDto { StationId = remote, Host = ((IPEndPoint?)client.Client.RemoteEndPoint)?.Address.ToString() ?? "", Port = ((IPEndPoint?)client.Client.RemoteEndPoint)?.Port ?? 0 }, "Disconnected", DateTime.UtcNow));
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+
+                var context = CreateClientContext(client);
+                if (!_clients.TryAdd(context.Id, context))
+                {
+                    try
+                    {
+                        context.Client.Dispose();
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+
+                    continue;
+                }
+
+                Log($"Client connected: {context.StationId}");
+                ClientConnected?.Invoke(this, new DeviceStatusChangedEventArgs(context.CreateDeviceEntry(), "Connected", DateTime.UtcNow));
+
+                _ = Task.Run(() => HandleClientAsync(context, cancellationToken), CancellationToken.None);
             }
         }
-
-        private void OnMessageReceived(GeoMessageDto message, string stationId)
+        catch (OperationCanceledException)
         {
-            // Reuse GeoMessageReceivedEventArgs - it expects DeviceEntryDto; create a transient DeviceEntryDto with station info
-            var device = new DeviceEntryDto { StationId = stationId, Host = "", Port = 0 };
-            MessageReceived?.Invoke(this, new GeoMessageReceivedEventArgs(message, device));
+            // ignored
         }
-
-        private void Log(string message)
+        catch (Exception ex)
         {
-            LogGenerated?.Invoke(this, new LogMessageEventArgs("TcpServer", message, DateTime.UtcNow));
+            Log($"Accept loop error: {ex.Message}");
         }
+    }
 
-        public void Dispose()
+    private async Task HandleClientAsync(ClientContext context, CancellationToken cancellationToken)
+    {
+        try
         {
-            try { _cts?.Cancel(); } catch { }
-            try { _listener.Stop(); } catch { }
-            foreach (var kv in _clients)
+            using var reader = new StreamReader(context.Client.GetStream(), Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+
+            while (!cancellationToken.IsCancellationRequested)
             {
-                try { kv.Value.Close(); kv.Value.Dispose(); } catch { }
+                string? line;
+                try
+                {
+                    line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                if (line == null)
+                {
+                    break;
+                }
+
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var messages = JsonSerializer.Deserialize<List<GeoMessageDto>>(line, SerializerOptions);
+                    if (messages == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var message in messages)
+                    {
+                        if (string.IsNullOrWhiteSpace(message.DeviceId))
+                        {
+                            message.DeviceId = context.StationId;
+                        }
+
+                        var device = context.CreateDeviceEntry();
+                        MessageReceived?.Invoke(this, new GeoMessageReceivedEventArgs(message, device));
+                    }
+                }
+                catch (JsonException jsonException)
+                {
+                    Log($"Invalid JSON from {context.StationId}: {jsonException.Message}");
+                }
             }
-            _clients.Clear();
-            _cts?.Dispose();
+        }
+        catch (IOException)
+        {
+            // connection closed
+        }
+        catch (ObjectDisposedException)
+        {
+            // connection disposed
+        }
+        catch (Exception ex)
+        {
+            Log($"Client {context.StationId} error: {ex.Message}");
+        }
+        finally
+        {
+            CleanupClient(context);
+        }
+    }
+
+    private void CleanupClient(ClientContext context)
+    {
+        if (_clients.TryRemove(context.Id, out _))
+        {
+            try
+            {
+                context.Client.Close();
+                context.Client.Dispose();
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        Log($"Client disconnected: {context.StationId}");
+        ClientDisconnected?.Invoke(this, new DeviceStatusChangedEventArgs(context.CreateDeviceEntry(), "Disconnected", DateTime.UtcNow));
+    }
+
+    private ClientContext CreateClientContext(TcpClient client)
+    {
+        var id = Guid.NewGuid();
+        var endpoint = client.Client.RemoteEndPoint as IPEndPoint;
+        var stationId = endpoint?.ToString() ?? id.ToString();
+        var host = endpoint?.Address.ToString() ?? string.Empty;
+        var port = endpoint?.Port ?? 0;
+
+        client.NoDelay = true;
+
+        return new ClientContext(id, client, stationId, host, port);
+    }
+
+    private void Log(string message)
+    {
+        LogGenerated?.Invoke(this, new LogMessageEventArgs("TcpServer", message, DateTime.UtcNow));
+    }
+
+    private sealed class ClientContext
+    {
+        public ClientContext(Guid id, TcpClient client, string stationId, string host, int port)
+        {
+            Id = id;
+            Client = client;
+            StationId = stationId;
+            Host = host;
+            Port = port;
+        }
+
+        public Guid Id { get; }
+        public TcpClient Client { get; }
+        public string StationId { get; }
+        public string Host { get; }
+        public int Port { get; }
+
+        public DeviceEntryDto CreateDeviceEntry()
+        {
+            return new DeviceEntryDto
+            {
+                StationId = StationId,
+                Host = Host,
+                Port = Port
+            };
         }
     }
 }

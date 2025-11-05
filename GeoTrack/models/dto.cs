@@ -101,6 +101,9 @@ public class ValidateInputDto
 
 public sealed class DeviceConfigDto
 {
+    [JsonPropertyName("server")]
+    public ServerConfigDto? Server { get; set; }
+
     [JsonPropertyName("devices")]
     public List<DeviceEntryDto> Devices { get; set; } = new();
 
@@ -112,6 +115,15 @@ public sealed class DeviceConfigDto
 
     [JsonPropertyName("appBehavior")]
     public AppBehaviorConfigDto? AppBehavior { get; set; }
+}
+
+public sealed class ServerConfigDto
+{
+    [JsonPropertyName("listenIp")]
+    public string ListenIp { get; set; } = "0.0.0.0";
+
+    [JsonPropertyName("listenPort")]
+    public int ListenPort { get; set; } = 5099;
 }
 
 public sealed class DeviceEntryDto
