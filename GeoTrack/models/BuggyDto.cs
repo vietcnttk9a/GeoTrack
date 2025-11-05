@@ -33,3 +33,5 @@ public sealed class BuggyDto
     [JsonPropertyName("timestamp")]
     public DateTime Timestamp { get; set; }
 }
+
+

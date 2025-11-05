@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using GeoTrack.Models;
 
@@ -7,7 +8,11 @@ namespace GeoTrack;
 
 public sealed class BuggyRepository
 {
-    private readonly ConcurrentDictionary<string, BuggyDto> _buggies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, BuggyState> _buggies =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // Cửa sổ thời gian 10 giây để lọc nhiễu
+    private static readonly TimeSpan WindowSize = TimeSpan.FromSeconds(10);
 
     public void Update(string stationId, GeoMessageDto message)
     {
@@ -16,41 +21,25 @@ public sealed class BuggyRepository
             stationId = message.DeviceId;
         }
 
-        var buggy = new BuggyDto
-        {
-            StationId = stationId,
-            DeviceId = string.IsNullOrWhiteSpace(message.DeviceId) ? stationId : message.DeviceId,
-            Latitude = message.Latitude,
-            Longitude = message.Longitude,
-            Sats = message.Sats,
-            SpeedKph = message.SpeedKph,
-            HeadingDeg = message.HeadingDeg,
-            BatteryPct = message.BatteryPct,
-            Status = message.Status,
-            Timestamp = message.Timestamp
-        };
+        var deviceId = string.IsNullOrWhiteSpace(message.DeviceId)
+            ? stationId
+            : message.DeviceId;
 
-        _buggies[buggy.DeviceId] = buggy;
+        var state = _buggies.GetOrAdd(deviceId, _ => new BuggyState());
+        state.AddSample(stationId, message, WindowSize);
     }
 
     public IReadOnlyCollection<BuggyDto> Snapshot()
     {
         return _buggies.Values
-            .Select(buggy => new BuggyDto
-            {
-                StationId = buggy.StationId,
-                DeviceId = buggy.DeviceId,
-                Latitude = buggy.Latitude,
-                Longitude = buggy.Longitude,
-                SpeedKph = buggy.SpeedKph,
-                Sats = buggy.Sats,
-                HeadingDeg = buggy.HeadingDeg,
-                BatteryPct = buggy.BatteryPct,
-                Status = buggy.Status,
-                Timestamp = buggy.Timestamp
-            })
+            .Select(state => state.Filtered)
+            .Where(dto => dto != null)
+            .Cast<BuggyDto>()
             .ToList();
     }
 
-    public void Clear() => _buggies.Clear();
+    public void Clear()
+    {
+        _buggies.Clear();
+    }
 }

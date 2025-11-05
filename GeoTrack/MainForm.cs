@@ -22,6 +22,7 @@ public partial class MainForm : Form
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
     private readonly BuggyRepository _buggyRepository = new();
+    
 
     private DeviceConfigDto? _currentConfig;
     private AppBehaviorConfigDto _appBehavior = new();
