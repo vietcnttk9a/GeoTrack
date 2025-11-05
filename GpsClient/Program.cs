@@ -255,7 +255,7 @@ namespace GpsClient
             public static CommandLineOptions Parse(string[] args)
             {
                 // default: 1 port 5001, loopback, 3 thiết bị 001/002/003
-                var ports = new List<int> { 5001 };
+                var ports = new List<int> { 5001 ,5002,5003};
                 var bindAddress = IPAddress.Loopback;
                 var deviceIds = new List<string> { "001", "002", "003" };
 
