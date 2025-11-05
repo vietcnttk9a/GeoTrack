@@ -43,6 +43,8 @@ namespace GeoTrack
             statusColumnHeader = new ColumnHeader();
             updatedColumnHeader = new ColumnHeader();
             mainTabControl = new TabControl();
+            messagesTabPage = new TabPage();
+            messagesGrid = new DataGridView();
             filteredTabPage = new TabPage();
             filteredGrid = new DataGridView();
             telemetryTabPage = new TabPage();
@@ -56,6 +58,8 @@ namespace GeoTrack
             exitMenuItem = new ToolStripMenuItem();
             trayNotifyIcon = new NotifyIcon(components);
             topPanel.SuspendLayout();
+            messagesTabPage.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)messagesGrid).BeginInit();
             filteredTabPage.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)filteredGrid).BeginInit();
             telemetryTabPage.SuspendLayout();
@@ -159,6 +163,7 @@ namespace GeoTrack
             //
             // mainTabControl
             //
+            mainTabControl.Controls.Add(messagesTabPage);
             mainTabControl.Controls.Add(filteredTabPage);
             mainTabControl.Controls.Add(telemetryTabPage);
             mainTabControl.Dock = DockStyle.Fill;
@@ -168,6 +173,35 @@ namespace GeoTrack
             mainTabControl.Size = new Size(984, 301);
             mainTabControl.TabIndex = 2;
             //
+            // messagesTabPage
+            //
+            messagesTabPage.Controls.Add(messagesGrid);
+            messagesTabPage.Location = new Point(4, 29);
+            messagesTabPage.Name = "messagesTabPage";
+            messagesTabPage.Padding = new Padding(3);
+            messagesTabPage.Size = new Size(976, 268);
+            messagesTabPage.TabIndex = 0;
+            messagesTabPage.Text = "Raw Messages";
+            messagesTabPage.UseVisualStyleBackColor = true;
+            //
+            // messagesGrid
+            //
+            messagesGrid.AllowUserToAddRows = false;
+            messagesGrid.AllowUserToDeleteRows = false;
+            messagesGrid.AllowUserToResizeRows = false;
+            messagesGrid.BackgroundColor = SystemColors.Window;
+            messagesGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            messagesGrid.Dock = DockStyle.Fill;
+            messagesGrid.Location = new Point(3, 3);
+            messagesGrid.MultiSelect = false;
+            messagesGrid.Name = "messagesGrid";
+            messagesGrid.ReadOnly = true;
+            messagesGrid.RowHeadersVisible = false;
+            messagesGrid.RowTemplate.Height = 29;
+            messagesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            messagesGrid.Size = new Size(970, 262);
+            messagesGrid.TabIndex = 0;
+            //
             // filteredTabPage
             //
             filteredTabPage.Controls.Add(filteredGrid);
@@ -175,7 +209,7 @@ namespace GeoTrack
             filteredTabPage.Name = "filteredTabPage";
             filteredTabPage.Padding = new Padding(3);
             filteredTabPage.Size = new Size(976, 268);
-            filteredTabPage.TabIndex = 0;
+            filteredTabPage.TabIndex = 1;
             filteredTabPage.Text = "Filtered Buggies";
             filteredTabPage.UseVisualStyleBackColor = true;
             //
@@ -204,7 +238,7 @@ namespace GeoTrack
             telemetryTabPage.Name = "telemetryTabPage";
             telemetryTabPage.Padding = new Padding(3);
             telemetryTabPage.Size = new Size(976, 268);
-            telemetryTabPage.TabIndex = 1;
+            telemetryTabPage.TabIndex = 2;
             telemetryTabPage.Text = "Telemetry";
             telemetryTabPage.UseVisualStyleBackColor = true;
             //
@@ -311,6 +345,8 @@ namespace GeoTrack
             Resize += MainForm_Resize;
             topPanel.ResumeLayout(false);
             topPanel.PerformLayout();
+            messagesTabPage.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)messagesGrid).EndInit();
             filteredTabPage.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)filteredGrid).EndInit();
             telemetryTabPage.ResumeLayout(false);
@@ -334,6 +370,8 @@ namespace GeoTrack
         private ColumnHeader statusColumnHeader;
         private ColumnHeader updatedColumnHeader;
         private TabControl mainTabControl;
+        private TabPage messagesTabPage;
+        private DataGridView messagesGrid;
         private TabPage filteredTabPage;
         private DataGridView filteredGrid;
         private TabPage telemetryTabPage;

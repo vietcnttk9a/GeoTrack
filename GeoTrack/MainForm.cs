@@ -15,13 +15,19 @@ namespace GeoTrack;
 public partial class MainForm : Form
 {
     private const int MaxLogLines = 500;
+    private const int MaxRawMessages = 100_000;
+    private const int MaxTelemetryHistory = 20_000;
 
+    private readonly BindingList<GeoMessageView> _visibleMessages = new();
+    private readonly List<GeoMessageView> _allMessages = new();
     private readonly BindingList<BuggySnapshotView> _buggySnapshots = new();
+    private readonly BindingList<TelemetrySendHistoryView> _telemetryHistory = new();
     private readonly Dictionary<string, DeviceStatusInfo> _deviceStatuses = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<TcpClientWorker> _workers = new();
     private readonly BuggyRepository _buggyRepository = new();
 
 
+    private int _pendingTelemetryEntriesCount;
     private string _lastExternalSendStatus = string.Empty;
     private DeviceConfigDto? _currentConfig;
     private AppBehaviorConfigDto _appBehavior = new();
@@ -48,14 +54,67 @@ public partial class MainForm : Form
 
     private void InitializeGrids()
     {
-        InitializeSnapshotGrid(filteredGrid, includeExternalSend: false);
-        InitializeSnapshotGrid(telemetryGrid, includeExternalSend: true);
+        InitializeMessageGrid();
+        InitializeSnapshotGrid(filteredGrid, _buggySnapshots, includeExternalSend: false);
+        InitializeSnapshotGrid(telemetryGrid, _telemetryHistory, includeExternalSend: true);
     }
 
-    private void InitializeSnapshotGrid(DataGridView grid, bool includeExternalSend)
+    private void InitializeMessageGrid()
+    {
+        messagesGrid.AutoGenerateColumns = false;
+        messagesGrid.DataSource = _visibleMessages;
+        messagesGrid.Columns.Clear();
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Time",
+            DataPropertyName = nameof(GeoMessageView.Time),
+            Width = 160
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Station",
+            DataPropertyName = nameof(GeoMessageView.StationId),
+            Width = 120
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Device",
+            DataPropertyName = nameof(GeoMessageView.DeviceId),
+            Width = 120
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Latitude",
+            DataPropertyName = nameof(GeoMessageView.Latitude),
+            Width = 110,
+            DefaultCellStyle = { Format = "F5" }
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Longitude",
+            DataPropertyName = nameof(GeoMessageView.Longitude),
+            Width = 110,
+            DefaultCellStyle = { Format = "F5" }
+        });
+
+        messagesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Sats",
+            DataPropertyName = nameof(GeoMessageView.Sats),
+            Width = 90,
+            DefaultCellStyle = { Format = "F0" }
+        });
+    }
+
+    private static void InitializeSnapshotGrid(DataGridView grid, IBindingList dataSource, bool includeExternalSend)
     {
         grid.AutoGenerateColumns = false;
-        grid.DataSource = _buggySnapshots;
+        grid.DataSource = dataSource;
         grid.Columns.Clear();
 
         grid.Columns.Add(new DataGridViewTextBoxColumn
@@ -369,15 +428,18 @@ public partial class MainForm : Form
     private AggregatePayloadDto CreateTelemetryPayload()
     {
         var snapshot = _buggyRepository.Snapshot();
+        var timestamp = DateTimeOffset.UtcNow;
+        var snapshotList = snapshot.ToList();
+        RecordTelemetryHistory(snapshotList, timestamp);
         return new AggregatePayloadDto
         {
-            Timestamp = DateTimeOffset.UtcNow,
+            Timestamp = timestamp,
             Metrics = new AggregateMetricsDto
             {
-                TotalDevices = snapshot.Count,
-                ActiveDevices = snapshot.Count
+                TotalDevices = snapshotList.Count,
+                ActiveDevices = snapshotList.Count
             },
-            Buggies = snapshot.ToList()
+            Buggies = snapshotList
         };
     }
 
@@ -388,6 +450,9 @@ public partial class MainForm : Form
             BeginInvoke(new Action<object?, GeoMessageReceivedEventArgs>(Worker_MessageReceived), sender, e);
             return;
         }
+
+        var messageView = GeoMessageView.FromMessage(e.Message, e.Device);
+        AppendRawMessage(messageView);
 
         _buggyRepository.Update(e.Device.StationId, e.Message);
         RefreshBuggySnapshotList();
@@ -449,12 +514,139 @@ public partial class MainForm : Form
             _selectedStationFilter = deviceFilterComboBox.SelectedItem?.ToString();
         }
 
+        ApplyMessageFilter();
         RefreshBuggySnapshotList();
     }
 
     private bool ShouldDisplay(string stationId)
     {
         return string.IsNullOrEmpty(_selectedStationFilter) || string.Equals(stationId, _selectedStationFilter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void AppendRawMessage(GeoMessageView view)
+    {
+        _allMessages.Add(view);
+        TrimAllMessages();
+
+        if (ShouldDisplay(view.StationId))
+        {
+            _visibleMessages.Add(view);
+            TrimVisibleMessages();
+        }
+    }
+
+    private void TrimAllMessages()
+    {
+        if (_allMessages.Count <= MaxRawMessages)
+        {
+            return;
+        }
+
+        var overflow = _allMessages.Count - MaxRawMessages;
+        if (overflow <= 0)
+        {
+            return;
+        }
+
+        var removed = _allMessages.GetRange(0, overflow);
+        _allMessages.RemoveRange(0, overflow);
+
+        if (removed.Count == 0)
+        {
+            return;
+        }
+
+        _visibleMessages.RaiseListChangedEvents = false;
+        foreach (var item in removed)
+        {
+            var index = _visibleMessages.IndexOf(item);
+            if (index >= 0)
+            {
+                _visibleMessages.RemoveAt(index);
+            }
+        }
+        _visibleMessages.RaiseListChangedEvents = true;
+        _visibleMessages.ResetBindings();
+    }
+
+    private void TrimVisibleMessages()
+    {
+        if (_visibleMessages.Count <= MaxRawMessages)
+        {
+            return;
+        }
+
+        _visibleMessages.RaiseListChangedEvents = false;
+        while (_visibleMessages.Count > MaxRawMessages)
+        {
+            _visibleMessages.RemoveAt(0);
+        }
+        _visibleMessages.RaiseListChangedEvents = true;
+        _visibleMessages.ResetBindings();
+    }
+
+    private void RecordTelemetryHistory(IReadOnlyList<BuggyDto> snapshot, DateTimeOffset timestamp)
+    {
+        if (snapshot.Count == 0)
+        {
+            _pendingTelemetryEntriesCount = 0;
+            return;
+        }
+
+        var timeText = timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        _pendingTelemetryEntriesCount = snapshot.Count;
+
+        foreach (var buggy in snapshot)
+        {
+            var entry = TelemetrySendHistoryView.FromBuggyDto(buggy, timeText);
+            _telemetryHistory.Add(entry);
+        }
+
+        TrimTelemetryHistory();
+    }
+
+    private void UpdatePendingTelemetryHistory(string statusText)
+    {
+        if (_pendingTelemetryEntriesCount <= 0)
+        {
+            return;
+        }
+
+        var startIndex = Math.Max(0, _telemetryHistory.Count - _pendingTelemetryEntriesCount);
+        for (var i = startIndex; i < _telemetryHistory.Count; i++)
+        {
+            _telemetryHistory[i].ExternalSendStatus = statusText;
+            _telemetryHistory.ResetItem(i);
+        }
+
+        _pendingTelemetryEntriesCount = 0;
+    }
+
+    private void TrimTelemetryHistory()
+    {
+        while (_telemetryHistory.Count > MaxTelemetryHistory)
+        {
+            _telemetryHistory.RemoveAt(0);
+        }
+    }
+
+    private void ApplyMessageFilter()
+    {
+        _visibleMessages.RaiseListChangedEvents = false;
+        _visibleMessages.Clear();
+
+        foreach (var message in _allMessages)
+        {
+            if (ShouldDisplay(message.StationId))
+            {
+                _visibleMessages.Add(message);
+            }
+        }
+
+        TrimVisibleMessages();
+
+        _visibleMessages.RaiseListChangedEvents = true;
+        _visibleMessages.ResetBindings();
     }
 
     private void ExternalStatusChanged(object? sender, ExternalAppStatusChangedEventArgs e)
@@ -468,6 +660,12 @@ public partial class MainForm : Form
         var statusText = $"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})";
         UpdateExternalStatus(statusText);
         _lastExternalSendStatus = statusText;
+
+        if (_pendingTelemetryEntriesCount > 0 && e.Status.StartsWith("Telemetry", StringComparison.OrdinalIgnoreCase))
+        {
+            UpdatePendingTelemetryHistory(statusText);
+        }
+
         RefreshBuggySnapshotList();
         UpdateTrayMenu();
     }
@@ -522,13 +720,17 @@ public partial class MainForm : Form
 
     private void ClearUiState()
     {
+        _allMessages.Clear();
+        _visibleMessages.Clear();
         _buggySnapshots.Clear();
+        _telemetryHistory.Clear();
         _deviceStatuses.Clear();
         statusListView.Items.Clear();
         connectionStatusLabel.Text = "Connected: 0 / 0 devices";
         UpdateExternalStatus("Disabled");
         _buggyRepository.Clear();
         _lastExternalSendStatus = string.Empty;
+        _pendingTelemetryEntriesCount = 0;
     }
 
     private void MainForm_Resize(object? sender, EventArgs e)
@@ -673,6 +875,29 @@ public partial class MainForm : Form
         _buggySnapshots.ResetBindings();
     }
 
+    private sealed class GeoMessageView
+    {
+        public required string Time { get; init; }
+        public required string StationId { get; init; }
+        public required string DeviceId { get; init; }
+        public double Latitude { get; init; }
+        public double Longitude { get; init; }
+        public double Sats { get; init; }
+
+        public static GeoMessageView FromMessage(GeoMessageDto message, DeviceEntryDto device)
+        {
+            return new GeoMessageView
+            {
+                Time = message.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                StationId = device.StationId,
+                DeviceId = message.DeviceId,
+                Latitude = message.Latitude,
+                Longitude = message.Longitude,
+                Sats = message.Sats
+            };
+        }
+    }
+
     private sealed class BuggySnapshotView
     {
         public required string Time { get; init; }
@@ -698,6 +923,35 @@ public partial class MainForm : Form
                 Status = buggy.Status,
                 IdleDurationSeconds = buggy.IdleDurationSeconds,
                 ExternalSendStatus = externalSendStatus
+            };
+        }
+    }
+
+    private sealed class TelemetrySendHistoryView
+    {
+        public required string Time { get; init; }
+        public required string Station { get; init; }
+        public required string Device { get; init; }
+        public double Latitude { get; init; }
+        public double Longitude { get; init; }
+        public double Sats { get; init; }
+        public string Status { get; init; } = string.Empty;
+        public int IdleDurationSeconds { get; init; }
+        public string ExternalSendStatus { get; set; } = string.Empty;
+
+        public static TelemetrySendHistoryView FromBuggyDto(BuggyDto buggy, string timeText)
+        {
+            return new TelemetrySendHistoryView
+            {
+                Time = timeText,
+                Station = buggy.StationId,
+                Device = buggy.DeviceId,
+                Latitude = buggy.Latitude,
+                Longitude = buggy.Longitude,
+                Sats = buggy.Sats,
+                Status = buggy.Status,
+                IdleDurationSeconds = buggy.IdleDurationSeconds,
+                ExternalSendStatus = "Pending"
             };
         }
     }
