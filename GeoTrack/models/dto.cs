@@ -38,14 +38,6 @@ public sealed class BuggyDto
     [JsonPropertyName("sats")]
     public double Sats { get; set; }
 
-    [JsonPropertyName("speedKph")]
-    public double SpeedKph { get; set; }
-
-    [JsonPropertyName("headingDeg")]
-    public double HeadingDeg { get; set; }
-
-    [JsonPropertyName("batteryPct")]
-    public double BatteryPct { get; set; }
 
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;

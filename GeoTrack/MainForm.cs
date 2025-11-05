@@ -430,7 +430,27 @@ public partial class MainForm : Form
         var snapshot = _buggyRepository.Snapshot();
         var timestamp = DateTimeOffset.UtcNow;
         var snapshotList = snapshot.ToList();
-        RecordTelemetryHistory(snapshotList, timestamp);
+
+        // Đẩy việc update history về UI thread
+        if (InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    RecordTelemetryHistory(snapshotList, timestamp);
+                }));
+            }
+            catch
+            {
+                // Trong trường hợp form đã dispose khi app đang shutdown thì bỏ qua
+            }
+        }
+        else
+        {
+            RecordTelemetryHistory(snapshotList, timestamp);
+        }
+
         return new AggregatePayloadDto
         {
             Timestamp = timestamp,
@@ -442,6 +462,7 @@ public partial class MainForm : Form
             Buggies = snapshotList
         };
     }
+
 
     private void Worker_MessageReceived(object? sender, GeoMessageReceivedEventArgs e)
     {
@@ -525,12 +546,12 @@ public partial class MainForm : Form
 
     private void AppendRawMessage(GeoMessageView view)
     {
-        _allMessages.Add(view);
+        _allMessages.Insert(0, view);
         TrimAllMessages();
 
         if (ShouldDisplay(view.StationId))
         {
-            _visibleMessages.Add(view);
+            _visibleMessages.Insert(0, view);
             TrimVisibleMessages();
         }
     }
@@ -548,8 +569,9 @@ public partial class MainForm : Form
             return;
         }
 
-        var removed = _allMessages.GetRange(0, overflow);
-        _allMessages.RemoveRange(0, overflow);
+        var startIndex = Math.Max(0, _allMessages.Count - overflow);
+        var removed = _allMessages.GetRange(startIndex, overflow);
+        _allMessages.RemoveRange(startIndex, overflow);
 
         if (removed.Count == 0)
         {
@@ -565,9 +587,11 @@ public partial class MainForm : Form
                 _visibleMessages.RemoveAt(index);
             }
         }
+
         _visibleMessages.RaiseListChangedEvents = true;
         _visibleMessages.ResetBindings();
     }
+
 
     private void TrimVisibleMessages()
     {
@@ -579,11 +603,14 @@ public partial class MainForm : Form
         _visibleMessages.RaiseListChangedEvents = false;
         while (_visibleMessages.Count > MaxRawMessages)
         {
-            _visibleMessages.RemoveAt(0);
+            // xoá bản ghi cũ nhất ở cuối
+            _visibleMessages.RemoveAt(_visibleMessages.Count - 1);
         }
+
         _visibleMessages.RaiseListChangedEvents = true;
         _visibleMessages.ResetBindings();
     }
+
 
     private void RecordTelemetryHistory(IReadOnlyList<BuggyDto> snapshot, DateTimeOffset timestamp)
     {
@@ -594,16 +621,19 @@ public partial class MainForm : Form
         }
 
         var timeText = timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-        _pendingTelemetryEntriesCount = snapshot.Count;
 
+        // batch mới nhất sẽ nằm ở đầu list
         foreach (var buggy in snapshot)
         {
             var entry = TelemetrySendHistoryView.FromBuggyDto(buggy, timeText);
-            _telemetryHistory.Add(entry);
+            _telemetryHistory.Insert(0, entry);
         }
 
+        _pendingTelemetryEntriesCount = snapshot.Count;
         TrimTelemetryHistory();
     }
+
+
 
     private void UpdatePendingTelemetryHistory(string statusText)
     {
@@ -612,8 +642,8 @@ public partial class MainForm : Form
             return;
         }
 
-        var startIndex = Math.Max(0, _telemetryHistory.Count - _pendingTelemetryEntriesCount);
-        for (var i = startIndex; i < _telemetryHistory.Count; i++)
+        var maxIndex = Math.Min(_pendingTelemetryEntriesCount, _telemetryHistory.Count);
+        for (var i = 0; i < maxIndex; i++)
         {
             _telemetryHistory[i].ExternalSendStatus = statusText;
             _telemetryHistory.ResetItem(i);
@@ -622,13 +652,16 @@ public partial class MainForm : Form
         _pendingTelemetryEntriesCount = 0;
     }
 
+
     private void TrimTelemetryHistory()
     {
         while (_telemetryHistory.Count > MaxTelemetryHistory)
         {
-            _telemetryHistory.RemoveAt(0);
+            // xoá bản ghi cũ nhất (đang nằm ở cuối)
+            _telemetryHistory.RemoveAt(_telemetryHistory.Count - 1);
         }
     }
+
 
     private void ApplyMessageFilter()
     {
@@ -854,7 +887,33 @@ public partial class MainForm : Form
 
     private sealed record DeviceStatusInfo(string Status, DateTime Timestamp);
 
+    private System.Windows.Forms.Timer? _snapshotRefreshTimer;
+    private bool _snapshotRefreshPending;
+
+    private void EnsureSnapshotRefreshTimer()
+    {
+        if (_snapshotRefreshTimer != null) return;
+
+        _snapshotRefreshTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 200 // ms, tối đa 5 lần/giây
+        };
+        _snapshotRefreshTimer.Tick += (_, _) =>
+        {
+            if (!_snapshotRefreshPending) return;
+            _snapshotRefreshPending = false;
+            RefreshBuggySnapshotListInternal();
+        };
+        _snapshotRefreshTimer.Start();
+    }
+
     private void RefreshBuggySnapshotList()
+    {
+        EnsureSnapshotRefreshTimer();
+        _snapshotRefreshPending = true;
+    }
+
+    private void RefreshBuggySnapshotListInternal()
     {
         var snapshot = _buggyRepository.Snapshot();
         var filtered = snapshot
@@ -874,6 +933,8 @@ public partial class MainForm : Form
         _buggySnapshots.RaiseListChangedEvents = true;
         _buggySnapshots.ResetBindings();
     }
+
+    
 
     private sealed class GeoMessageView
     {

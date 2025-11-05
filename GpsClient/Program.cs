@@ -13,18 +13,24 @@ namespace GpsClient
 {
     internal sealed class Program
     {
-        // Giới hạn lat/lng (VD: Việt Nam)
-        private const double MinLatitude = 8.18;
-        private const double MaxLatitude = 23.39;
-        private const double MinLongitude = 102.14;
-        private const double MaxLongitude = 109.46;
-
-        // Thời gian giữa hai lần gửi
+        // Thời gian giữa hai lần gửi (5s)
         private static readonly TimeSpan SendInterval = TimeSpan.FromSeconds(5);
 
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         {
             WriteIndented = false
+        };
+
+        // Danh sách tọa độ 6 hố (1E -> 6E)
+        // Index 0 = hố 1E, 1 = 2E, ...
+        private static readonly (double Lat, double Lng)[] HoleCoordinates =
+        {
+            (20.97381234081408, 105.39408802986146), // 1E
+            (20.97266026779571, 105.39425969123842), // 2E
+            (20.971327859231653, 105.39372324943544), // 3E
+            (20.96854278643389, 105.39591193199158), // 4E
+            (20.970255912893922, 105.39561152458192), // 5E
+            (20.97381234081408, 105.39484977722168)  // 6E
         };
 
         private static async Task Main(string[] args)
@@ -165,22 +171,27 @@ namespace GpsClient
 
             var random = new Random();
 
+            // Mỗi connection có một bộ state giả lập riêng cho từng thiết bị
+            var simulationStates = CreateInitialSimulationStates(deviceIds);
+
             try
             {
                 while (!cancellationToken.IsCancellationRequested && client.Connected)
                 {
                     var now = DateTime.UtcNow;
 
-                    // Mỗi lần gửi: 1 mảng nhiều thiết bị
+                    // Mỗi lần gửi: 1 mảng nhiều thiết bị (001,002,003,...)
                     var messages = new List<GeoReading>(deviceIds.Count);
                     foreach (var id in deviceIds)
                     {
+                        var (lat, lng) = GetNextPosition(id, simulationStates);
+
                         var message = new GeoReading
                         {
-                            Id = id,                 // "001", "002", "003", ...
-                            Datetime = now,          // "2025-11-05T14:30:00Z"
-                            Lat = NextDouble(random, MinLatitude, MaxLatitude),
-                            Lng = NextDouble(random, MinLongitude, MaxLongitude),
+                            Id = id,                // "001", "002", "003", ...
+                            Datetime = now,         // "2025-11-05T14:30:00Z"
+                            Lat = lat,
+                            Lng = lng,
                             Sats = random.Next(8, 16) // 8–15 vệ tinh
                         };
 
@@ -229,9 +240,111 @@ namespace GpsClient
             }
         }
 
-        private static double NextDouble(Random random, double minValue, double maxValue)
+        // --- Logic giả lập di chuyển qua các hố ------------------------------
+
+        /// <summary>
+        /// Mỗi device có 1 state:
+        /// - CurrentHoleIndex: đang ở hố nào (0..5)
+        /// - IsStopping: đang dừng tại hố hay đang di chuyển
+        /// - StopTicks: số lần gửi giữ nguyên tọa độ tại mỗi hố
+        ///   (001: 6 tick = 30s, 002: 7 tick = 35s, 003: 8 tick = 40s, ...)
+        /// - RemainingStopTicks: còn bao nhiêu tick dừng
+        /// - MoveStepIndex: bước nội suy giữa 2 hố
+        /// </summary>
+        private sealed class DeviceSimulationState
         {
-            return minValue + (random.NextDouble() * (maxValue - minValue));
+            public int CurrentHoleIndex { get; set; }
+            public bool IsStopping { get; set; }
+            public int StopTicks { get; set; }
+            public int RemainingStopTicks { get; set; }
+            public int MoveStepIndex { get; set; }
+        }
+
+        private static Dictionary<string, DeviceSimulationState> CreateInitialSimulationStates(IReadOnlyList<string> deviceIds)
+        {
+            var dict = new Dictionary<string, DeviceSimulationState>(StringComparer.OrdinalIgnoreCase);
+
+            // Mặc định:
+            // device 0 (001) -> dừng 30s (6 tick)
+            // device 1 (002) -> dừng 35s (7 tick)
+            // device 2 (003) -> dừng 40s (8 tick)
+            for (var i = 0; i < deviceIds.Count; i++)
+            {
+                var id = deviceIds[i];
+                var stopTicks = 6 + i; // 5s * (6 + i)
+
+                dict[id] = new DeviceSimulationState
+                {
+                    CurrentHoleIndex = 0,   // bắt đầu từ hố 1E
+                    IsStopping = true,      // mới vào hố -> đang dừng
+                    StopTicks = stopTicks,
+                    RemainingStopTicks = stopTicks,
+                    MoveStepIndex = 0
+                };
+            }
+
+            return dict;
+        }
+
+        private static (double Lat, double Lng) GetNextPosition(
+            string deviceId,
+            Dictionary<string, DeviceSimulationState> states)
+        {
+            if (!states.TryGetValue(deviceId, out var state))
+            {
+                // fallback: nếu vì lý do gì đó chưa có state
+                state = new DeviceSimulationState
+                {
+                    CurrentHoleIndex = 0,
+                    IsStopping = true,
+                    StopTicks = 6,
+                    RemainingStopTicks = 6,
+                    MoveStepIndex = 0
+                };
+                states[deviceId] = state;
+            }
+
+            var from = HoleCoordinates[state.CurrentHoleIndex];
+
+            // Đang dừng tại hố
+            if (state.IsStopping)
+            {
+                state.RemainingStopTicks--;
+
+                if (state.RemainingStopTicks <= 0)
+                {
+                    // Hết thời gian dừng -> chuẩn bị di chuyển sang hố tiếp theo
+                    state.IsStopping = false;
+                    state.MoveStepIndex = 0;
+                }
+
+                return from;
+            }
+
+            // Đang di chuyển từ hố hiện tại sang hố tiếp theo
+            var toIndex = (state.CurrentHoleIndex + 1) % HoleCoordinates.Length;
+            var to = HoleCoordinates[toIndex];
+
+            const int MoveStepsBetweenHoles = 6; // 6 bước = 6*5s = 30s di chuyển
+
+            var step = Math.Min(state.MoveStepIndex, MoveStepsBetweenHoles);
+            var t = (double)step / MoveStepsBetweenHoles;
+
+            var lat = from.Lat + (to.Lat - from.Lat) * t;
+            var lng = from.Lng + (to.Lng - from.Lng) * t;
+
+            state.MoveStepIndex++;
+
+            // Đã đến hố tiếp theo
+            if (state.MoveStepIndex > MoveStepsBetweenHoles)
+            {
+                state.CurrentHoleIndex = toIndex;
+                state.IsStopping = true;
+                state.RemainingStopTicks = state.StopTicks;
+                state.MoveStepIndex = 0;
+            }
+
+            return (lat, lng);
         }
 
         // --- CLI options -----------------------------------------------------
@@ -254,8 +367,8 @@ namespace GpsClient
 
             public static CommandLineOptions Parse(string[] args)
             {
-                // default: 1 port 5001, loopback, 3 thiết bị 001/002/003
-                var ports = new List<int> { 5001 ,5002,5003};
+                // default: 3 port 5001,5002,5003, loopback, 3 thiết bị 001/002/003
+                var ports = new List<int> { 5001, 5002, 5003 };
                 var bindAddress = IPAddress.Loopback;
                 var deviceIds = new List<string> { "001", "002", "003" };
 
@@ -364,10 +477,10 @@ namespace GpsClient
             // "datetime": "2025-11-05T14:30:00Z"
             public DateTime Datetime { get; set; }
 
-            // "lat": 10.7
+            // "lat": ...
             public double Lat { get; set; }
 
-            // "lng": 106.6
+            // "lng": ...
             public double Lng { get; set; }
 
             // "sats": 12
