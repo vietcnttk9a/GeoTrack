@@ -4,6 +4,10 @@
     { "stationId": "STA-0002", "host": "127.0.0.1", "port": 5002 },
     { "stationId": "STA-0003", "host": "127.0.0.1", "port": 5003 }
   ],
+  "server": {
+    "listenIp": "0.0.0.0",
+    "listenPort": 5059
+  },
   "externalApp": {
     "baseUrl": "http://localhost:5000",
     "clientId": "0e9a1a3a-d422-454f-c883-be117f3d0b0e.152",
