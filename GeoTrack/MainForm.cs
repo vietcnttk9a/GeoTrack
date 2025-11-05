@@ -344,10 +344,10 @@ public partial class MainForm : Form
         deviceFilterComboBox.Items.Clear();
         deviceFilterComboBox.Items.Add("All stations");
 
-        foreach (var device in config.Devices)
-        {
-            EnsureStationFilterContains(device.StationId);
-        }
+        // foreach (var device in config.Devices)
+        // {
+        //     EnsureStationFilterContains(device.StationId);
+        // }
 
         if (deviceFilterComboBox.Items.Count > 0)
         {

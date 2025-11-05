@@ -25,10 +25,10 @@ public static class ConfigLoader
         await using var stream = File.OpenRead(path);
         var config = await JsonSerializer.DeserializeAsync<DeviceConfigDto>(stream, SerializerOptions, cancellationToken);
 
-        if (config?.Devices == null || config.Devices.Count == 0)
-        {
-            throw new InvalidDataException("File devices.config.json không chứa danh sách thiết bị hợp lệ.");
-        }
+        // if (config?.Devices == null || config.Devices.Count == 0)
+        // {
+        //     throw new InvalidDataException("File devices.config.json không chứa danh sách thiết bị hợp lệ.");
+        // }
 
         config.AppBehavior ??= new AppBehaviorConfigDto();
         config.AppBehavior.Tray ??= new TrayConfigDto();

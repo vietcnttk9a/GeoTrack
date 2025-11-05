@@ -211,7 +211,8 @@ internal sealed class Program
         for (var i = 0; i < deviceIds.Count; i++)
         {
             var id = deviceIds[i];
-            var stopTicks = 6 + i;
+            // var stopTicks = 6 + i;
+            var stopTicks = 20; // 20 * 2s = 40s dừng
 
             dict[id] = new DeviceSimulationState
             {

@@ -20,11 +20,11 @@
     }
   },
   "appBehavior": {
-    "runInBackgroundWhenHidden": true,
+    "runInBackgroundWhenHidden": false,
     "startMinimized": false,
     "tray": {
-      "showTrayIcon": true,
-      "balloonOnBackground": true
+      "showTrayIcon": false,
+      "balloonOnBackground": false
     }
   }
 }
