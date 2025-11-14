@@ -14,6 +14,7 @@ public sealed class AggregatePayloadDto
     public List<BuggyDto> Buggies { get; set; } = new();
 }
 
+
 public sealed class AggregateMetricsDto
 {
     [JsonPropertyName("totalDevices")]
@@ -145,9 +146,6 @@ public sealed class ExternalAppConfigDto
 {
     [JsonPropertyName("baseUrl")]
     public string BaseUrl { get; set; } = string.Empty;
-    
-    [JsonPropertyName("socketUrl")]
-    public string SocketUrl { get; set; } = string.Empty;
 
     [JsonPropertyName("clientId")]
     public string ClientId { get; set; } = string.Empty;
@@ -163,6 +161,9 @@ public sealed class ExternalAppConfigDto
 
     [JsonPropertyName("http")]
     public ExternalAppHttpConfigDto Http { get; set; } = new();
+
+    [JsonPropertyName("socketUrl")]
+    public string SocketUrl { get; set; } = string.Empty;
 }
 
 public sealed class ExternalAppEndpointsConfigDto
@@ -265,10 +266,10 @@ public sealed class TokenResponseDto
 public sealed class SocketIoMessageInputDto
 {
     [JsonPropertyName("key")]
-    public string Key  { get; set; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
 
     [JsonPropertyName("name")]
-    public string Name  { get; set; }= string.Empty;
+    public string Name { get; set; } = string.Empty;
 
     [JsonPropertyName("lat")]
     public double Latitude { get; set; }

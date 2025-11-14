@@ -28,7 +28,9 @@ public partial class MainForm : Form
 
 
     private int _pendingTelemetryEntriesCount;
+    private int _pendingSocketEntriesCount;
     private string _lastExternalSendStatus = string.Empty;
+    private string _lastSocketSendStatus = string.Empty;
     private DeviceConfigDto? _currentConfig;
     private AppBehaviorConfigDto _appBehavior = new();
     private CancellationTokenSource? _appCts;
@@ -57,7 +59,7 @@ public partial class MainForm : Form
     {
         InitializeMessageGrid();
         InitializeSnapshotGrid(filteredGrid, _buggySnapshots, includeExternalSend: false);
-        InitializeSnapshotGrid(telemetryGrid, _telemetryHistory, includeExternalSend: true);
+        InitializeTelemetryGrid();
     }
 
     private void InitializeMessageGrid()
@@ -188,6 +190,86 @@ public partial class MainForm : Form
         }
     }
 
+    private void InitializeTelemetryGrid()
+    {
+        telemetryGrid.AutoGenerateColumns = false;
+        telemetryGrid.DataSource = _telemetryHistory;
+        telemetryGrid.Columns.Clear();
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Time",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Time),
+            Width = 160
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Station",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Station),
+            Width = 120
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Device",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Device),
+            Width = 120
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Latitude",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Latitude),
+            Width = 110,
+            DefaultCellStyle = { Format = "F5" }
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Longitude",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Longitude),
+            Width = 110,
+            DefaultCellStyle = { Format = "F5" }
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Sats",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Sats),
+            Width = 90,
+            DefaultCellStyle = { Format = "F0" }
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Status",
+            DataPropertyName = nameof(TelemetrySendHistoryView.Status),
+            Width = 90
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "IdleDuration (s)",
+            DataPropertyName = nameof(TelemetrySendHistoryView.IdleDurationSeconds),
+            Width = 130
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "External Send",
+            DataPropertyName = nameof(TelemetrySendHistoryView.ExternalSendStatus),
+            Width = 180
+        });
+
+        telemetryGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            HeaderText = "Socket Send",
+            DataPropertyName = nameof(TelemetrySendHistoryView.SocketSendStatus),
+            Width = 180
+        });
+    }
+
     private async void MainForm_Load(object? sender, EventArgs e)
     {
         await ReloadConfigurationAsync();
@@ -315,6 +397,7 @@ public partial class MainForm : Form
         {
             _externalSender.LogGenerated -= OnLogMessage;
             _externalSender.StatusChanged -= ExternalStatusChanged;
+            _externalSender.SocketStatusChanged -= ExternalSocketStatusChanged;
             _externalSender = null;
         }
 
@@ -360,6 +443,7 @@ public partial class MainForm : Form
         if (config.ExternalApp == null)
         {
             UpdateExternalStatus("Disabled");
+            UpdateSocketStatus("Disabled");
             return;
         }
 
@@ -386,11 +470,13 @@ public partial class MainForm : Form
         _externalSender = new ExternalAppSender(_httpClient, externalConfig, _tokenManager, CreateTelemetryPayload);
         _externalSender.LogGenerated += OnLogMessage;
         _externalSender.StatusChanged += ExternalStatusChanged;
+        _externalSender.SocketStatusChanged += ExternalSocketStatusChanged;
 
         toggleSendingMenuItem.Enabled = true;
         UpdateTrayMenu();
 
         UpdateExternalStatus("Initializing...");
+        UpdateSocketStatus("Waiting...");
 
         try
         {
@@ -412,6 +498,7 @@ public partial class MainForm : Form
             {
                 LogInfo("ExternalApp", $"Không thể khởi động sender: {ex.Message}");
                 UpdateExternalStatus("Sender error");
+                UpdateSocketStatus("Sender error");
             }
         }
     }
@@ -628,6 +715,7 @@ public partial class MainForm : Form
         if (snapshot.Count == 0)
         {
             _pendingTelemetryEntriesCount = 0;
+            _pendingSocketEntriesCount = 0;
             return;
         }
 
@@ -641,6 +729,7 @@ public partial class MainForm : Form
         }
 
         _pendingTelemetryEntriesCount = snapshot.Count;
+        _pendingSocketEntriesCount = snapshot.Count;
         TrimTelemetryHistory();
     }
 
@@ -661,6 +750,23 @@ public partial class MainForm : Form
         }
 
         _pendingTelemetryEntriesCount = 0;
+    }
+
+    private void UpdatePendingSocketTelemetryHistory(string statusText)
+    {
+        if (_pendingSocketEntriesCount <= 0)
+        {
+            return;
+        }
+
+        var maxIndex = Math.Min(_pendingSocketEntriesCount, _telemetryHistory.Count);
+        for (var i = 0; i < maxIndex; i++)
+        {
+            _telemetryHistory[i].SocketSendStatus = statusText;
+            _telemetryHistory.ResetItem(i);
+        }
+
+        _pendingSocketEntriesCount = 0;
     }
 
 
@@ -714,9 +820,32 @@ public partial class MainForm : Form
         UpdateTrayMenu();
     }
 
+    private void ExternalSocketStatusChanged(object? sender, ExternalAppStatusChangedEventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action<object?, ExternalAppStatusChangedEventArgs>(ExternalSocketStatusChanged), sender, e);
+            return;
+        }
+
+        var statusText = $"{e.Status} ({e.Timestamp.ToLocalTime():HH:mm:ss})";
+        UpdateSocketStatus(statusText);
+        _lastSocketSendStatus = statusText;
+
+        if (_pendingSocketEntriesCount > 0)
+        {
+            UpdatePendingSocketTelemetryHistory(statusText);
+        }
+    }
+
     private void UpdateExternalStatus(string status)
     {
         externalStatusLabel.Text = $"External app: {status}";
+    }
+
+    private void UpdateSocketStatus(string status)
+    {
+        socketStatusLabel.Text = $"Socket: {status}";
     }
 
     private void OnLogMessage(object? sender, LogMessageEventArgs e)
@@ -772,9 +901,12 @@ public partial class MainForm : Form
         statusListView.Items.Clear();
         connectionStatusLabel.Text = "Connected: 0 / 0 devices";
         UpdateExternalStatus("Disabled");
+        UpdateSocketStatus("Disabled");
         _buggyRepository.Clear();
         _lastExternalSendStatus = string.Empty;
+        _lastSocketSendStatus = string.Empty;
         _pendingTelemetryEntriesCount = 0;
+        _pendingSocketEntriesCount = 0;
     }
 
     private void MainForm_Resize(object? sender, EventArgs e)
@@ -1010,6 +1142,7 @@ public partial class MainForm : Form
         public string Status { get; init; } = string.Empty;
         public int IdleDurationSeconds { get; init; }
         public string ExternalSendStatus { get; set; } = string.Empty;
+        public string SocketSendStatus { get; set; } = string.Empty;
 
         public static TelemetrySendHistoryView FromBuggyDto(BuggyDto buggy, string timeText)
         {
@@ -1023,7 +1156,8 @@ public partial class MainForm : Form
                 Sats = buggy.Sats,
                 Status = buggy.Status,
                 IdleDurationSeconds = buggy.IdleDurationSeconds,
-                ExternalSendStatus = "Pending"
+                ExternalSendStatus = "Pending",
+                SocketSendStatus = "Pending"
             };
         }
     }

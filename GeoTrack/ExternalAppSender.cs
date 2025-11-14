@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -47,6 +48,7 @@ public sealed class ExternalAppSender
     }
 
     public event EventHandler<ExternalAppStatusChangedEventArgs>? StatusChanged;
+    public event EventHandler<ExternalAppStatusChangedEventArgs>? SocketStatusChanged;
     public event EventHandler<LogMessageEventArgs>? LogGenerated;
 
     public Task? Completion => _backgroundTask;
@@ -62,25 +64,39 @@ public sealed class ExternalAppSender
 
         _backgroundTask = Task.Run(() => RunAsync(cancellationToken), cancellationToken);
     }
-    private List<SocketIoMessageInputDto> BuildSocketPayload(List<BuggyDto> buggies)
+
+    private List<SocketIoMessageInputDto> BuildSocketPayload(IReadOnlyCollection<BuggyDto> buggies)
     {
-        return buggies.Select(b => new SocketIoMessageInputDto
+        var result = new List<SocketIoMessageInputDto>(buggies.Count);
+
+        foreach (var buggy in buggies)
         {
-            Key = b.DeviceId,
-            Name = "",              // yêu cầu để empty
-            Latitude = b.Latitude,
-            Longitude = b.Longitude,
-            Sats = b.Sats
-        }).ToList();
+            result.Add(new SocketIoMessageInputDto
+            {
+                Key = buggy.DeviceId,
+                Name = string.Empty,
+                Latitude = buggy.Latitude,
+                Longitude = buggy.Longitude,
+                Sats = buggy.Sats
+            });
+        }
+
+        return result;
     }
-    private HttpRequestMessage CreateSocketRequest(string accessToken, object payload)
+
+    private HttpRequestMessage CreateSocketRequest(string accessToken, IReadOnlyCollection<SocketIoMessageInputDto> payload)
     {
-        var url = $"{_config.SocketUrl}/notification/update-buggy-location";
+        if (string.IsNullOrWhiteSpace(_config.SocketUrl))
+        {
+            throw new InvalidOperationException("SocketUrl is not configured.");
+        }
+
+        var baseUri = new Uri(_config.SocketUrl, UriKind.Absolute);
+        var url = new Uri(baseUri, "/notification/update-buggy-location");
 
         var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Content = JsonContent.Create(payload, options: SerializerOptions);
-
         return request;
     }
 
@@ -138,11 +154,19 @@ public sealed class ExternalAppSender
         {
             var accessToken = await _tokenManager.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
             var payload = _payloadFactory();
-            if(payload.Buggies.Count == 0)
+
+            var buggyList = payload.Buggies != null
+                ? new List<BuggyDto>(payload.Buggies)
+                : new List<BuggyDto>();
+
+            if (buggyList.Count == 0)
             {
                 Log("No BuggyData.");
             }
-            using var response = await _httpClient.SendWithRetryAsync(() => CreateRequest(accessToken, payload), _httpConfig, cancellationToken).ConfigureAwait(false);
+
+            using var response = await _httpClient
+                .SendWithRetryAsync(() => CreateRequest(accessToken, payload), _httpConfig, cancellationToken)
+                .ConfigureAwait(false);
 
             if (response.IsSuccessStatusCode)
             {
@@ -155,31 +179,35 @@ public sealed class ExternalAppSender
                 StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Telemetry failed", DateTime.UtcNow));
                 Log($"Telemetry failed: {(int)response.StatusCode} {response.ReasonPhrase} {error}");
             }
-            var snapshot = payload.Buggies.ToList();
-            try
-            {
-                var socketPayload = BuildSocketPayload(snapshot);
-                using var socketResp = await _httpClient.SendWithRetryAsync(
-                    () => CreateSocketRequest(accessToken, socketPayload),
-                    _httpConfig,
-                    cancellationToken
-                ).ConfigureAwait(false);
 
-                if (socketResp.IsSuccessStatusCode)
-                {
-                    Log("Socket update sent.");
-                }
-                else
-                {
-                    var err = await socketResp.Content.ReadAsStringAsync(cancellationToken);
-                    Log($"Socket update failed: {err}");
-                }
-            }
-            catch (Exception ex)
+            if (!string.IsNullOrWhiteSpace(_config.SocketUrl) && buggyList.Count > 0)
             {
-                Log($"Socket update error: {ex.Message}");
+                try
+                {
+                    var socketPayload = BuildSocketPayload(buggyList);
+
+                    using var socketResponse = await _httpClient
+                        .SendWithRetryAsync(() => CreateSocketRequest(accessToken, socketPayload), _httpConfig, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (socketResponse.IsSuccessStatusCode)
+                    {
+                        SocketStatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Socket sent", DateTime.UtcNow));
+                        Log("Socket update sent successfully.");
+                    }
+                    else
+                    {
+                        var err = await socketResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                        SocketStatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Socket failed", DateTime.UtcNow));
+                        Log($"Socket update failed: {(int)socketResponse.StatusCode} {socketResponse.ReasonPhrase} {err}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SocketStatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Socket error", DateTime.UtcNow));
+                    Log($"Socket update error: {ex.Message}");
+                }
             }
-            
         }
         catch (OperationCanceledException)
         {

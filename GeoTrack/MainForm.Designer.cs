@@ -38,6 +38,7 @@ namespace GeoTrack
             filterLabel = new Label();
             connectionStatusLabel = new Label();
             externalStatusLabel = new Label();
+            socketStatusLabel = new Label();
             statusListView = new ListView();
             deviceColumnHeader = new ColumnHeader();
             statusColumnHeader = new ColumnHeader();
@@ -70,6 +71,7 @@ namespace GeoTrack
             //
             // topPanel
             //
+            topPanel.Controls.Add(socketStatusLabel);
             topPanel.Controls.Add(externalStatusLabel);
             topPanel.Controls.Add(reloadConfigButton);
             topPanel.Controls.Add(deviceFilterComboBox);
@@ -131,6 +133,15 @@ namespace GeoTrack
             externalStatusLabel.Size = new Size(176, 20);
             externalStatusLabel.TabIndex = 4;
             externalStatusLabel.Text = "External app: Disabled";
+            //
+            // socketStatusLabel
+            //
+            socketStatusLabel.AutoSize = true;
+            socketStatusLabel.Location = new Point(230, 36);
+            socketStatusLabel.Name = "socketStatusLabel";
+            socketStatusLabel.Size = new Size(122, 20);
+            socketStatusLabel.TabIndex = 5;
+            socketStatusLabel.Text = "Socket: Disabled";
             //
             // statusListView
             //
@@ -365,6 +376,7 @@ namespace GeoTrack
         private Label filterLabel;
         private Label connectionStatusLabel;
         private Label externalStatusLabel;
+        private Label socketStatusLabel;
         private ListView statusListView;
         private ColumnHeader deviceColumnHeader;
         private ColumnHeader statusColumnHeader;
