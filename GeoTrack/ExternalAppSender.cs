@@ -62,6 +62,27 @@ public sealed class ExternalAppSender
 
         _backgroundTask = Task.Run(() => RunAsync(cancellationToken), cancellationToken);
     }
+    private List<SocketIoMessageInputDto> BuildSocketPayload(List<BuggyDto> buggies)
+    {
+        return buggies.Select(b => new SocketIoMessageInputDto
+        {
+            Key = b.DeviceId,
+            Name = "",              // yêu cầu để empty
+            Latitude = b.Latitude,
+            Longitude = b.Longitude,
+            Sats = b.Sats
+        }).ToList();
+    }
+    private HttpRequestMessage CreateSocketRequest(string accessToken, object payload)
+    {
+        var url = $"{_config.SocketUrl}/notification/update-buggy-location";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Content = JsonContent.Create(payload, options: SerializerOptions);
+
+        return request;
+    }
 
     public void Pause()
     {
@@ -134,6 +155,31 @@ public sealed class ExternalAppSender
                 StatusChanged?.Invoke(this, new ExternalAppStatusChangedEventArgs("Telemetry failed", DateTime.UtcNow));
                 Log($"Telemetry failed: {(int)response.StatusCode} {response.ReasonPhrase} {error}");
             }
+            var snapshot = payload.Buggies.ToList();
+            try
+            {
+                var socketPayload = BuildSocketPayload(snapshot);
+                using var socketResp = await _httpClient.SendWithRetryAsync(
+                    () => CreateSocketRequest(accessToken, socketPayload),
+                    _httpConfig,
+                    cancellationToken
+                ).ConfigureAwait(false);
+
+                if (socketResp.IsSuccessStatusCode)
+                {
+                    Log("Socket update sent.");
+                }
+                else
+                {
+                    var err = await socketResp.Content.ReadAsStringAsync(cancellationToken);
+                    Log($"Socket update failed: {err}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Socket update error: {ex.Message}");
+            }
+            
         }
         catch (OperationCanceledException)
         {

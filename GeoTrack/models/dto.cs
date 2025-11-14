@@ -145,6 +145,9 @@ public sealed class ExternalAppConfigDto
 {
     [JsonPropertyName("baseUrl")]
     public string BaseUrl { get; set; } = string.Empty;
+    
+    [JsonPropertyName("socketUrl")]
+    public string SocketUrl { get; set; } = string.Empty;
 
     [JsonPropertyName("clientId")]
     public string ClientId { get; set; } = string.Empty;
@@ -257,4 +260,22 @@ public sealed class TokenResponseDto
 
     [JsonPropertyName("refreshToken")]
     public string? RefreshToken { get; set; }
+}
+
+public sealed class SocketIoMessageInputDto
+{
+    [JsonPropertyName("key ")]
+    public string Key  { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name  { get; set; }= string.Empty;
+
+    [JsonPropertyName("lat")]
+    public double Latitude { get; set; }
+
+    [JsonPropertyName("lng")]
+    public double Longitude { get; set; }
+
+    [JsonPropertyName("sats")]
+    public double Sats { get; set; }
 }
