@@ -5,7 +5,7 @@
   },
   "externalApp": {
     "baseUrl": "http://localhost:5000",
-    "socketUrl": "http://localhost:6001",
+    "socketUrl": "http://localhost:3000",
     "clientId": "cbd81b3a-1895-73ad-d1f6-f56064e12499.163",
     "seccretToken": "DIEI4A7RctWYEwnt3XdeWWZkKH7zfwnX",
     "sendIntervalSeconds": 5,
