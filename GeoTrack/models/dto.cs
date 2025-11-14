@@ -264,7 +264,7 @@ public sealed class TokenResponseDto
 
 public sealed class SocketIoMessageInputDto
 {
-    [JsonPropertyName("key ")]
+    [JsonPropertyName("key")]
     public string Key  { get; set; } = string.Empty;
 
     [JsonPropertyName("name")]
@@ -273,7 +273,7 @@ public sealed class SocketIoMessageInputDto
     [JsonPropertyName("lat")]
     public double Latitude { get; set; }
 
-    [JsonPropertyName("lng")]
+    [JsonPropertyName("long")]
     public double Longitude { get; set; }
 
     [JsonPropertyName("sats")]

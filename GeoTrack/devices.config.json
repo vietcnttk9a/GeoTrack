@@ -6,8 +6,8 @@
   "externalApp": {
     "baseUrl": "http://localhost:5000",
     "socketUrl": "http://localhost:3000",
-    "clientId": "0e9a1a3a-d422-454f-c883-be117f3d0b0e.152",
-    "seccretToken": "OaljMFcPiRSTmqqObQDPRbTvjfI2On2U",
+    "clientId": "cbd81b3a-1895-73ad-d1f6-f56064e12499.163",
+    "seccretToken": "DIEI4A7RctWYEwnt3XdeWWZkKH7zfwnX",
     "sendIntervalSeconds": 5,
     "endpoints": {
       "loginPath": "/api/auth-plugin/auth/login-by-key",
